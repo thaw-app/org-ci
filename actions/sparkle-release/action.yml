@@ -1,5 +1,5 @@
 name: Sparkle Release
-description: Package a notarized app ZIP, sign Sparkle updates, and refresh appcast.xml on gh-pages
+description: Package a notarized app ZIP, sign Sparkle updates, and optionally refresh appcast.xml on gh-pages
 
 inputs:
   tag:
@@ -7,7 +7,8 @@ inputs:
     required: true
   channel:
     description: Sparkle channel (stable, beta, or alpha). Stable omits sparkle:channel.
-    required: true
+    required: false
+    default: stable
   app-name:
     description: Name of the .app bundle
     required: true
@@ -52,7 +53,7 @@ outputs:
     description: Path to the generated appcast.xml
     value: ${{ steps.appcast.outputs.appcast-path }}
   delta-glob:
-    description: Glob for newly generated delta assets
+    description: Glob of .delta files in the Sparkle archives directory (may include prior-release deltas)
     value: ${{ steps.appcast.outputs.delta-glob }}
 
 runs:
@@ -121,6 +122,7 @@ runs:
       shell: bash
       env:
         TAG: ${{ inputs.tag }}
+        CHANNEL: ${{ inputs.channel }}
         ZIP_PATH: ${{ steps.package.outputs.zip-path }}
         PREVIOUS_COUNT: ${{ inputs.previous-release-count }}
         ASSET_PREFIX: ${{ inputs.asset-prefix }}
@@ -136,8 +138,33 @@ runs:
 
         cp "$ZIP_PATH" "$archives/"
 
-        # Best-effort: fetch recent ZIPs so generate_appcast can emit deltas.
-        if command -v gh >/dev/null 2>&1; then
+        git fetch origin gh-pages:gh-pages 2>/dev/null || true
+        appcast_loaded=false
+        if git show origin/gh-pages:appcast.xml > "$pages/appcast.xml" 2>/dev/null \
+          || git show gh-pages:appcast.xml > "$pages/appcast.xml" 2>/dev/null; then
+          echo "Loaded existing appcast from gh-pages"
+          appcast_loaded=true
+        else
+          # Escape XML specials in the stub title.
+          title_escaped=$(
+            printf '%s' "$APPCAST_TITLE" \
+              | sed -e 's/&/\&amp;/g' -e 's/</\&lt;/g' -e 's/>/\&gt;/g' -e 's/"/\&quot;/g' -e "s/'/\&apos;/g"
+          )
+          printf '%s\n' \
+            '<?xml version="1.0" standalone="yes"?>' \
+            '<rss xmlns:sparkle="http://www.andymatuschak.org/xml-namespaces/sparkle" version="2.0">' \
+            '  <channel>' \
+            "    <title>${title_escaped}</title>" \
+            '    <language>en</language>' \
+            '  </channel>' \
+            '</rss>' > "$pages/appcast.xml"
+          echo "Created empty appcast stub"
+        fi
+
+        # Only fetch prior ZIPs when an existing appcast is present. On a stub,
+        # generate_appcast --channel would otherwise retag those ZIPs as the
+        # current channel (e.g. beta).
+        if [[ "$appcast_loaded" == true ]] && command -v gh >/dev/null 2>&1; then
           fetched=0
           while IFS= read -r release_tag; do
             [[ -z "$release_tag" || "$release_tag" == "$TAG" ]] && continue
@@ -151,22 +178,8 @@ runs:
               --jq '.[] | select(.isDraft == false) | .tagName' || true
           )
           echo "Fetched $fetched prior ZIP(s) for deltas"
-        fi
-
-        git fetch origin gh-pages:gh-pages 2>/dev/null || true
-        if git show origin/gh-pages:appcast.xml > "$pages/appcast.xml" 2>/dev/null \
-          || git show gh-pages:appcast.xml > "$pages/appcast.xml" 2>/dev/null; then
-          echo "Loaded existing appcast from gh-pages"
         else
-          printf '%s\n' \
-            '<?xml version="1.0" standalone="yes"?>' \
-            '<rss xmlns:sparkle="http://www.andymatuschak.org/xml-namespaces/sparkle" version="2.0">' \
-            '  <channel>' \
-            "    <title>${APPCAST_TITLE}</title>" \
-            '    <language>en</language>' \
-            '  </channel>' \
-            '</rss>' > "$pages/appcast.xml"
-          echo "Created empty appcast stub"
+          echo "Skipping prior ZIP fetch (stub appcast or gh unavailable)"
         fi
 
         echo "SPARKLE_ARCHIVES=$archives" >> "$GITHUB_ENV"
@@ -187,8 +200,9 @@ runs:
         set -euo pipefail
 
         key_file="$RUNNER_TEMP/sparkle_eddsa_private.key"
+        trap 'rm -f "$key_file"' EXIT
+        umask 077
         printf '%s\n' "$SPARKLE_PRIVATE_KEY" > "$key_file"
-        chmod 600 "$key_file"
 
         download_prefix="https://github.com/${REPOSITORY}/releases/download/${TAG}/"
         if [[ -n "$RELEASE_HTML_URL" ]]; then
@@ -224,9 +238,7 @@ runs:
           's#(url="https://github.com/\Q'"$REPOSITORY"'\E/releases/download/)[^/]+/(\Q'"$ASSET_PREFIX"'\E_([^"]+)\.zip")#$1$3/$2#g' \
           "$SPARKLE_PAGES/appcast.xml"
 
-        rm -f "$key_file"
-
-        # Expose deltas that belong to this tag for release upload.
+        # Glob of every .delta under the archives dir (includes any prior-release deltas).
         delta_glob="$SPARKLE_ARCHIVES/*.delta"
         echo "appcast-path=$SPARKLE_PAGES/appcast.xml" >> "$GITHUB_OUTPUT"
         echo "delta-glob=$delta_glob" >> "$GITHUB_OUTPUT"
@@ -246,32 +258,48 @@ runs:
         set -euo pipefail
 
         work="$RUNNER_TEMP/gh-pages-work"
-        rm -rf "$work"
-        mkdir -p "$work"
+        remote="https://x-access-token:${GITHUB_TOKEN}@github.com/${GITHUB_REPOSITORY}.git"
+        max_attempts=5
+        attempt=1
 
-        git clone --depth 1 --branch gh-pages \
-          "https://x-access-token:${GITHUB_TOKEN}@github.com/${GITHUB_REPOSITORY}.git" \
-          "$work" 2>/dev/null \
-        || {
-          git clone --depth 1 \
-            "https://x-access-token:${GITHUB_TOKEN}@github.com/${GITHUB_REPOSITORY}.git" \
-            "$work"
-          git -C "$work" checkout --orphan gh-pages
-          git -C "$work" rm -rf . >/dev/null 2>&1 || true
-        }
+        while true; do
+          rm -rf "$work"
+          mkdir -p "$work"
 
-        cp "$SPARKLE_PAGES/appcast.xml" "$work/appcast.xml"
-        if [[ ! -f "$work/.gitignore" ]]; then
-          printf '*\n!appcast.xml\n!.gitignore\n' > "$work/.gitignore"
-        fi
+          if git clone --depth 1 --branch gh-pages "$remote" "$work" 2>/dev/null; then
+            :
+          else
+            git clone --depth 1 "$remote" "$work"
+            git -C "$work" checkout --orphan gh-pages
+            git -C "$work" rm -rf . >/dev/null 2>&1 || true
+          fi
 
-        git -C "$work" config user.name "github-actions[bot]"
-        git -C "$work" config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-        git -C "$work" add appcast.xml .gitignore
-        if git -C "$work" diff --staged --quiet; then
-          echo "appcast.xml unchanged"
-          exit 0
-        fi
+          cp "$SPARKLE_PAGES/appcast.xml" "$work/appcast.xml"
+          if [[ ! -f "$work/.gitignore" ]]; then
+            printf '*\n!appcast.xml\n!.gitignore\n' > "$work/.gitignore"
+          fi
 
-        git -C "$work" commit -m "chore(sparkle): publish appcast for ${TAG} (${CHANNEL})"
-        git -C "$work" push origin HEAD:gh-pages
+          git -C "$work" config user.name "github-actions[bot]"
+          git -C "$work" config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git -C "$work" add appcast.xml .gitignore
+          if git -C "$work" diff --staged --quiet; then
+            echo "appcast.xml unchanged"
+            exit 0
+          fi
+
+          git -C "$work" commit -m "chore(sparkle): publish appcast for ${TAG} (${CHANNEL})"
+
+          if git -C "$work" push origin HEAD:gh-pages; then
+            echo "Published appcast to gh-pages"
+            exit 0
+          fi
+
+          if [[ "$attempt" -ge "$max_attempts" ]]; then
+            echo "Failed to push gh-pages after $max_attempts attempts"
+            exit 1
+          fi
+
+          echo "gh-pages push failed (attempt $attempt/$max_attempts); refetching…"
+          attempt=$((attempt + 1))
+          sleep $((attempt * 2))
+        done

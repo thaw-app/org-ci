@@ -1,0 +1,27 @@
+name: actionlint
+
+on:
+  push:
+    paths:
+      - "actions/**"
+      - ".github/workflows/**"
+  pull_request:
+    paths:
+      - "actions/**"
+      - ".github/workflows/**"
+
+jobs:
+  actionlint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - name: Download actionlint
+        shell: bash
+        run: |
+          set -euo pipefail
+          bash <(curl -fsSL https://raw.githubusercontent.com/rhysd/actionlint/main/scripts/download-actionlint.bash)
+      - name: Lint workflows
+        shell: bash
+        run: |
+          set -euo pipefail
+          ./actionlint -color

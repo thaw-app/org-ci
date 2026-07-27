@@ -12,6 +12,10 @@ inputs:
     description: Directory containing the exported .app
     required: false
     default: build/Export
+  keychain-path:
+    description: Keychain that holds the notarytool-profile (must match configure-signing)
+    required: false
+    default: ""
 
 runs:
   using: composite
@@ -22,12 +26,19 @@ runs:
         DMG_NAME: ${{ inputs.dmg-name }}
         APP_NAME: ${{ inputs.app-name }}
         EXPORT_PATH: ${{ inputs.export-path }}
+        KEYCHAIN_PATH_INPUT: ${{ inputs.keychain-path }}
       run: |
         set -euo pipefail
 
+        if [[ -n "$KEYCHAIN_PATH_INPUT" ]]; then
+          keychain="$KEYCHAIN_PATH_INPUT"
+        else
+          keychain="$RUNNER_TEMP/buildagent.keychain"
+        fi
+
         submission=$(xcrun notarytool submit "build/$DMG_NAME" \
           --keychain-profile "notarytool-profile" \
-          --keychain "$RUNNER_TEMP/buildagent.keychain" \
+          --keychain "$keychain" \
           --output-format json \
           --wait)
         echo "$submission"
@@ -35,7 +46,7 @@ runs:
         submission_id=$(echo "$submission" | jq -r '.id')
         xcrun notarytool log "$submission_id" \
           --keychain-profile "notarytool-profile" \
-          --keychain "$RUNNER_TEMP/buildagent.keychain"
+          --keychain "$keychain"
 
         status=$(echo "$submission" | jq -r '.status')
         if [[ "$status" != "Accepted" ]]; then
