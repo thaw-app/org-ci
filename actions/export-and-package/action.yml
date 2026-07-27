@@ -79,6 +79,7 @@ runs:
 
         export_plist="$RUNNER_TEMP/ExportOptions.plist"
         rm -f "$export_plist"
+        /usr/libexec/PlistBuddy -c "Clear dict" "$export_plist"
         /usr/libexec/PlistBuddy \
           -c "Add :method string developer-id" \
           -c "Add :teamID string $APPLE_TEAM_ID" \
