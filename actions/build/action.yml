@@ -1,0 +1,89 @@
+name: Build
+description: Build and archive a macOS app for Developer ID distribution
+
+inputs:
+  apple-team-id:
+    description: Apple Developer Team ID
+    required: true
+  project-name:
+    description: Xcode project file name (for example, App.xcodeproj). Mutually exclusive with workspace-name.
+    required: false
+    default: ""
+  workspace-name:
+    description: Xcode workspace file name (for example, App.xcworkspace). Mutually exclusive with project-name.
+    required: false
+    default: ""
+  scheme-name:
+    description: Xcode scheme name
+    required: true
+  deployment-target:
+    description: Minimum macOS deployment target
+    required: true
+  configuration:
+    description: Xcode configuration
+    required: false
+    default: Release
+  archive-path:
+    description: Output .xcarchive path
+    required: false
+    default: build/Archive.xcarchive
+  enable-hardened-runtime:
+    description: Pass ENABLE_HARDENED_RUNTIME=YES (required for notarization unless the project already sets it)
+    required: false
+    default: "true"
+
+runs:
+  using: composite
+  steps:
+    - name: Cache SwiftPM
+      uses: actions/cache@v5
+      with:
+        path: ~/Library/Caches/org.swift.swiftpm
+        key: spm-${{ runner.os }}-${{ hashFiles('**/Package.resolved') }}
+        restore-keys: |
+          spm-${{ runner.os }}-
+
+    - name: xcodebuild archive
+      shell: bash
+      env:
+        APPLE_TEAM_ID: ${{ inputs.apple-team-id }}
+        PROJECT_NAME: ${{ inputs.project-name }}
+        WORKSPACE_NAME: ${{ inputs.workspace-name }}
+        SCHEME_NAME: ${{ inputs.scheme-name }}
+        DEPLOYMENT_TARGET: ${{ inputs.deployment-target }}
+        CONFIGURATION: ${{ inputs.configuration }}
+        ARCHIVE_PATH: ${{ inputs.archive-path }}
+        ENABLE_HARDENED_RUNTIME: ${{ inputs.enable-hardened-runtime }}
+      run: |
+        set -euo pipefail
+
+        if [[ -n "$PROJECT_NAME" && -n "$WORKSPACE_NAME" ]]; then
+          echo "Pass only one of project-name or workspace-name"
+          exit 1
+        fi
+        if [[ -z "$PROJECT_NAME" && -z "$WORKSPACE_NAME" ]]; then
+          echo "Pass project-name or workspace-name"
+          exit 1
+        fi
+
+        args=(
+          archive
+          -scheme "$SCHEME_NAME"
+          -destination platform=macOS
+          -configuration "$CONFIGURATION"
+          -archivePath "$ARCHIVE_PATH"
+          "MACOSX_DEPLOYMENT_TARGET=$DEPLOYMENT_TARGET"
+          "DEVELOPMENT_TEAM=$APPLE_TEAM_ID"
+          CODE_SIGN_STYLE=Manual
+          CODE_SIGN_IDENTITY="Developer ID Application"
+        )
+        if [[ -n "$WORKSPACE_NAME" ]]; then
+          args+=(-workspace "$WORKSPACE_NAME")
+        else
+          args+=(-project "$PROJECT_NAME")
+        fi
+        if [[ "$ENABLE_HARDENED_RUNTIME" == "true" ]]; then
+          args+=(ENABLE_HARDENED_RUNTIME=YES)
+        fi
+
+        xcodebuild "${args[@]}"

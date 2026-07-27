@@ -1,0 +1,63 @@
+name: Notarize and Validate
+description: Submit a DMG to Apple notarytool, staple, and run Gatekeeper validation
+
+inputs:
+  dmg-name:
+    description: Name of the DMG file to notarize (under build/)
+    required: true
+  app-name:
+    description: Name of the .app bundle for Gatekeeper validation
+    required: true
+  export-path:
+    description: Directory containing the exported .app
+    required: false
+    default: build/Export
+  keychain-path:
+    description: Keychain that holds the notarytool-profile (must match configure-signing)
+    required: false
+    default: ""
+
+runs:
+  using: composite
+  steps:
+    - name: Submit, staple, and validate
+      shell: bash
+      env:
+        DMG_NAME: ${{ inputs.dmg-name }}
+        APP_NAME: ${{ inputs.app-name }}
+        EXPORT_PATH: ${{ inputs.export-path }}
+        KEYCHAIN_PATH_INPUT: ${{ inputs.keychain-path }}
+      run: |
+        set -euo pipefail
+
+        if [[ -n "$KEYCHAIN_PATH_INPUT" ]]; then
+          keychain="$KEYCHAIN_PATH_INPUT"
+        else
+          keychain="$RUNNER_TEMP/buildagent.keychain"
+        fi
+
+        submission=$(xcrun notarytool submit "build/$DMG_NAME" \
+          --keychain-profile "notarytool-profile" \
+          --keychain "$keychain" \
+          --output-format json \
+          --wait)
+        echo "$submission"
+
+        submission_id=$(echo "$submission" | jq -r '.id')
+        status=$(echo "$submission" | jq -r '.status')
+
+        if [[ "$status" != "Accepted" ]]; then
+          echo "Notarization failed with status: $status"
+          xcrun notarytool log "$submission_id" \
+            --keychain-profile "notarytool-profile" \
+            --keychain "$keychain" || true
+          exit 1
+        fi
+
+        xcrun notarytool log "$submission_id" \
+          --keychain-profile "notarytool-profile" \
+          --keychain "$keychain" || true
+
+        xcrun stapler staple "build/$DMG_NAME"
+        xcrun stapler validate "build/$DMG_NAME"
+        spctl --assess --type execute --verbose "$EXPORT_PATH/$APP_NAME"
