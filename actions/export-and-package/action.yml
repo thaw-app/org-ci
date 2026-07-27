@@ -26,7 +26,7 @@ inputs:
   brand-assets-ref:
     description: Git ref for brand-assets
     required: false
-    default: main
+    default: 13fcae0b1e26f605f6a4f404d1f21d120a65ec64
   brand-assets-background:
     description: Path within brand-assets for the DMG background image
     required: false
@@ -116,6 +116,7 @@ runs:
           --hide-extension "$APP_NAME" \
           --icon "$APP_NAME" 150 150 \
           --icon "Applications" 436 150 \
+          --hdiutil-retries 10 \
           "build/$DMG_NAME" \
           "$staging"
 

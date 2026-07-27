@@ -42,6 +42,8 @@ runs:
           keychain="$RUNNER_TEMP/buildagent.keychain"
         fi
         keychain_password="$(openssl rand -base64 32)"
+        security delete-keychain "$keychain" 2>/dev/null || true
+        rm -f "$keychain" "$keychain"-db 2>/dev/null || true
         security create-keychain -p "$keychain_password" "$keychain"
         security set-keychain-settings -lut 21600 "$keychain"
         security unlock-keychain -p "$keychain_password" "$keychain"
@@ -52,12 +54,13 @@ runs:
         done < <(security list-keychains -d user | tr -d '" ')
         # bash 3.2 + set -u: empty arrays are unbound; expand only when set.
         security list-keychains -d user -s "$keychain" ${existing[@]+"${existing[@]}"}
-        base64 -D <<<"$APPLE_APPLICATION_CERT" > "$RUNNER_TEMP/cert.p12"
-        security import "$RUNNER_TEMP/cert.p12" -k "$keychain" \
+        cert_p12="$RUNNER_TEMP/cert.p12"
+        base64 -D <<<"$APPLE_APPLICATION_CERT" > "$cert_p12"
+        trap 'rm -f "$cert_p12"' EXIT
+        security import "$cert_p12" -k "$keychain" \
           -P "$APPLE_APPLICATION_CERT_PASSWORD" -T /usr/bin/codesign
         security set-key-partition-list -S "apple-tool:,apple:,codesign:" \
           -s -k "$keychain_password" "$keychain"
-        rm "$RUNNER_TEMP/cert.p12"
         xcrun notarytool store-credentials "notarytool-profile" \
           --apple-id "$APPLE_ID" \
           --password "$APPLE_ID_PASSWORD" \
