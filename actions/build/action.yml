@@ -1,0 +1,51 @@
+name: Build
+description: Build and archive a macOS app for Developer ID distribution
+
+inputs:
+  apple-team-id:
+    description: Apple Developer Team ID
+    required: true
+  project-name:
+    description: Xcode project file name (for example, App.xcodeproj)
+    required: true
+  scheme-name:
+    description: Xcode scheme name
+    required: true
+  deployment-target:
+    description: Minimum macOS deployment target
+    required: true
+  configuration:
+    description: Xcode configuration
+    required: false
+    default: Release
+  archive-path:
+    description: Output .xcarchive path
+    required: false
+    default: build/Archive.xcarchive
+
+runs:
+  using: composite
+  steps:
+    - name: Cache SwiftPM
+      uses: actions/cache@v5
+      with:
+        path: ~/Library/Caches/org.swift.swiftpm
+        key: spm-${{ runner.os }}-${{ hashFiles('**/Package.resolved') }}
+        restore-keys: |
+          spm-${{ runner.os }}-
+
+    - name: xcodebuild archive
+      shell: bash
+      env:
+        APPLE_TEAM_ID: ${{ inputs.apple-team-id }}
+      run: |
+        xcodebuild archive \
+          -project "${{ inputs.project-name }}" \
+          -scheme "${{ inputs.scheme-name }}" \
+          -destination platform=macOS \
+          -configuration "${{ inputs.configuration }}" \
+          -archivePath "${{ inputs.archive-path }}" \
+          MACOSX_DEPLOYMENT_TARGET=${{ inputs.deployment-target }} \
+          DEVELOPMENT_TEAM="$APPLE_TEAM_ID" \
+          CODE_SIGN_STYLE=Manual \
+          CODE_SIGN_IDENTITY="Developer ID Application"

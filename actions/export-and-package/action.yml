@@ -1,0 +1,124 @@
+name: Export Archive and Package DMG
+description: Export an Xcode archive, verify signature, and create a signed DMG
+
+inputs:
+  apple-team-id:
+    description: Apple Developer Team ID
+    required: true
+  app-name:
+    description: Name of the .app bundle (for example, App.app)
+    required: true
+  dmg-name:
+    description: Name of the output DMG file
+    required: true
+  archive-path:
+    description: Input .xcarchive path
+    required: false
+    default: build/Archive.xcarchive
+  export-path:
+    description: xcodebuild -exportPath directory
+    required: false
+    default: build/Export
+  brand-assets-repository:
+    description: Public GitHub repo hosting DMG packaging art (owner/name)
+    required: false
+    default: thaw-app/brand-assets
+  brand-assets-ref:
+    description: Git ref for brand-assets
+    required: false
+    default: main
+  brand-assets-background:
+    description: Path within brand-assets for the DMG background image
+    required: false
+    default: packaging/dmg-background@2x.png
+  dmg-background:
+    description: Workspace-relative DMG background path (skips brand-assets fetch when set)
+    required: false
+    default: ""
+  window-width:
+    description: create-dmg window width
+    required: false
+    default: "582"
+  window-height:
+    description: create-dmg window height
+    required: false
+    default: "300"
+
+runs:
+  using: composite
+  steps:
+    - name: Install create-dmg
+      shell: bash
+      run: brew install create-dmg
+
+    - name: Fetch DMG background from brand-assets
+      if: inputs.dmg-background == ''
+      uses: actions/checkout@v7
+      with:
+        repository: ${{ inputs.brand-assets-repository }}
+        ref: ${{ inputs.brand-assets-ref }}
+        sparse-checkout: |
+          ${{ inputs.brand-assets-background }}
+        sparse-checkout-cone-mode: false
+        path: brand-assets
+
+    - name: Export archive and create signed DMG
+      shell: bash
+      env:
+        APPLE_TEAM_ID: ${{ inputs.apple-team-id }}
+        APP_NAME: ${{ inputs.app-name }}
+        DMG_NAME: ${{ inputs.dmg-name }}
+        ARCHIVE_PATH: ${{ inputs.archive-path }}
+        EXPORT_PATH: ${{ inputs.export-path }}
+        DMG_BACKGROUND_INPUT: ${{ inputs.dmg-background }}
+        BRAND_ASSETS_BACKGROUND: ${{ inputs.brand-assets-background }}
+        WINDOW_WIDTH: ${{ inputs.window-width }}
+        WINDOW_HEIGHT: ${{ inputs.window-height }}
+      run: |
+        set -euo pipefail
+
+        export_plist="$RUNNER_TEMP/ExportOptions.plist"
+        rm -f "$export_plist"
+        /usr/libexec/PlistBuddy \
+          -c "Add :method string developer-id" \
+          -c "Add :teamID string $APPLE_TEAM_ID" \
+          -c "Add :signingStyle string manual" \
+          -c "Add :destination string export" \
+          "$export_plist"
+
+        xcodebuild -exportArchive \
+          -archivePath "$ARCHIVE_PATH" \
+          -exportPath "$EXPORT_PATH" \
+          -exportOptionsPlist "$export_plist"
+
+        codesign -vvv --deep --strict "$EXPORT_PATH/$APP_NAME"
+
+        vol_name="${APP_NAME%.app}"
+        staging="$RUNNER_TEMP/dmg-staging"
+        if [[ -n "$DMG_BACKGROUND_INPUT" ]]; then
+          dmg_bg="$DMG_BACKGROUND_INPUT"
+        else
+          dmg_bg="brand-assets/$BRAND_ASSETS_BACKGROUND"
+        fi
+
+        rm -rf "$staging"
+        mkdir -p "$staging"
+
+        cp -R "$EXPORT_PATH/$APP_NAME" "$staging/$APP_NAME"
+        ln -s /Applications "$staging/Applications"
+
+        create-dmg \
+          --volname "$vol_name" \
+          --background "$dmg_bg" \
+          --window-size "$WINDOW_WIDTH" "$WINDOW_HEIGHT" \
+          --icon-size 100 \
+          --hide-extension "$APP_NAME" \
+          --icon "$APP_NAME" 150 150 \
+          --icon "Applications" 436 150 \
+          "build/$DMG_NAME" \
+          "$staging"
+
+        codesign --sign "Developer ID Application" \
+          --timestamp \
+          --team-id "$APPLE_TEAM_ID" \
+          "build/$DMG_NAME"
