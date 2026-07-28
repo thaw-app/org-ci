@@ -1,5 +1,7 @@
 name: Sparkle Release
-description: Package a notarized app ZIP, sign Sparkle updates, and optionally refresh appcast.xml on gh-pages
+description: >-
+  Package a notarized app ZIP, sign Sparkle updates, and optionally refresh
+  appcast.xml on gh-pages (app repo or a dedicated updates repository).
 
 inputs:
   tag:
@@ -30,7 +32,7 @@ inputs:
     required: false
     default: "3"
   publish-appcast:
-    description: Push updated appcast.xml to the gh-pages branch
+    description: Push updated appcast.xml to the feed repository gh-pages branch
     required: false
     default: "true"
   export-path:
@@ -39,6 +41,20 @@ inputs:
     default: build/Export
   release-html-url:
     description: Override sparkle --link HTML URL (defaults to this repo's tag page)
+    required: false
+    default: ""
+  updates-repository:
+    description: >-
+      Owner/name hosting Sparkle ZIP/delta releases and appcast Pages
+      (for example, thaw-app/updates). Empty keeps feed + downloads on the
+      caller repository (legacy).
+    required: false
+    default: ""
+  updates-token:
+    description: >-
+      Token with contents:write on updates-repository (required when
+      updates-repository is set and publish-appcast is true). Public reads may
+      fall back to github.token.
     required: false
     default: ""
 
@@ -55,10 +71,43 @@ outputs:
   delta-glob:
     description: Glob of .delta files in the Sparkle archives directory (may include prior-release deltas)
     value: ${{ steps.appcast.outputs.delta-glob }}
+  download-repository:
+    description: Repository that hosts ZIP/delta download URLs for this run
+    value: ${{ steps.meta.outputs.download-repository }}
 
 runs:
   using: composite
   steps:
+    - name: Resolve feed and download repositories
+      id: meta
+      shell: bash
+      env:
+        UPDATES_REPO: ${{ inputs.updates-repository }}
+        UPDATES_TOKEN: ${{ inputs.updates-token }}
+        PUBLISH_APPCAST: ${{ inputs.publish-appcast }}
+        CALLER_REPO: ${{ github.repository }}
+      run: |
+        set -euo pipefail
+
+        if [[ -n "$UPDATES_REPO" ]]; then
+          feed_repo="$UPDATES_REPO"
+          download_repo="$UPDATES_REPO"
+          if [[ "$PUBLISH_APPCAST" == "true" && -z "$UPDATES_TOKEN" ]]; then
+            echo "updates-token is required when updates-repository is set and publish-appcast is true"
+            exit 1
+          fi
+        else
+          feed_repo="$CALLER_REPO"
+          download_repo="$CALLER_REPO"
+        fi
+
+        {
+          echo "feed-repository=$feed_repo"
+          echo "download-repository=$download_repo"
+        } >> "$GITHUB_OUTPUT"
+
+        echo "feed=$feed_repo download=$download_repo"
+
     - name: Package notarized ZIP
       id: package
       shell: bash
@@ -127,6 +176,10 @@ runs:
         PREVIOUS_COUNT: ${{ inputs.previous-release-count }}
         ASSET_PREFIX: ${{ inputs.asset-prefix }}
         APPCAST_TITLE: ${{ inputs.appcast-title }}
+        FEED_REPO: ${{ steps.meta.outputs.feed-repository }}
+        DOWNLOAD_REPO: ${{ steps.meta.outputs.download-repository }}
+        CALLER_REPO: ${{ github.repository }}
+        UPDATES_TOKEN: ${{ inputs.updates-token }}
         GH_TOKEN: ${{ github.token }}
       run: |
         set -euo pipefail
@@ -138,13 +191,27 @@ runs:
 
         cp "$ZIP_PATH" "$archives/"
 
-        git fetch origin gh-pages:gh-pages 2>/dev/null || true
+        feed_token="${UPDATES_TOKEN:-$GH_TOKEN}"
         appcast_loaded=false
-        if git show origin/gh-pages:appcast.xml > "$pages/appcast.xml" 2>/dev/null \
-          || git show gh-pages:appcast.xml > "$pages/appcast.xml" 2>/dev/null; then
-          echo "Loaded existing appcast from gh-pages"
-          appcast_loaded=true
+
+        if [[ "$FEED_REPO" == "$CALLER_REPO" ]]; then
+          git fetch origin gh-pages:gh-pages 2>/dev/null || true
+          if git show origin/gh-pages:appcast.xml > "$pages/appcast.xml" 2>/dev/null \
+            || git show gh-pages:appcast.xml > "$pages/appcast.xml" 2>/dev/null; then
+            echo "Loaded existing appcast from ${FEED_REPO}@gh-pages"
+            appcast_loaded=true
+          fi
         else
+          if GH_TOKEN="$feed_token" gh api \
+            "repos/${FEED_REPO}/contents/appcast.xml?ref=gh-pages" \
+            --jq .content 2>/dev/null | base64 -d > "$pages/appcast.xml" \
+            && [[ -s "$pages/appcast.xml" ]]; then
+            echo "Loaded existing appcast from ${FEED_REPO}@gh-pages"
+            appcast_loaded=true
+          fi
+        fi
+
+        if [[ "$appcast_loaded" != true ]]; then
           # Escape XML specials in the stub title.
           title_escaped=$(
             printf '%s' "$APPCAST_TITLE" \
@@ -161,6 +228,28 @@ runs:
           echo "Created empty appcast stub"
         fi
 
+        download_prior_zip() {
+          local release_tag="$1"
+          local asset="${ASSET_PREFIX}_${release_tag}.zip"
+          if [[ "$DOWNLOAD_REPO" != "$CALLER_REPO" ]]; then
+            if GH_TOKEN="${UPDATES_TOKEN:-$GH_TOKEN}" gh release download "$release_tag" \
+              --repo "$DOWNLOAD_REPO" --pattern "$asset" --dir "$archives" 2>/dev/null; then
+              return 0
+            fi
+          fi
+          if gh release download "$release_tag" \
+            --repo "$CALLER_REPO" --pattern "$asset" --dir "$archives" 2>/dev/null; then
+            return 0
+          fi
+          return 1
+        }
+
+        list_prior_tags() {
+          local repo="$1" token="$2"
+          GH_TOKEN="$token" gh release list --repo "$repo" --limit 20 --json tagName,isDraft \
+            --jq '.[] | select(.isDraft == false) | .tagName' 2>/dev/null || true
+        }
+
         # Only fetch prior ZIPs when an existing appcast is present. On a stub,
         # generate_appcast --channel would otherwise retag those ZIPs as the
         # current channel (e.g. beta).
@@ -168,14 +257,17 @@ runs:
           fetched=0
           while IFS= read -r release_tag; do
             [[ -z "$release_tag" || "$release_tag" == "$TAG" ]] && continue
-            asset="${ASSET_PREFIX}_${release_tag}.zip"
-            if gh release download "$release_tag" --pattern "$asset" --dir "$archives" 2>/dev/null; then
+            if download_prior_zip "$release_tag"; then
               fetched=$((fetched + 1))
             fi
             [[ "$fetched" -ge "$PREVIOUS_COUNT" ]] && break
           done < <(
-            gh release list --limit 20 --json tagName,isDraft \
-              --jq '.[] | select(.isDraft == false) | .tagName' || true
+            {
+              if [[ "$DOWNLOAD_REPO" != "$CALLER_REPO" ]]; then
+                list_prior_tags "$DOWNLOAD_REPO" "${UPDATES_TOKEN:-$GH_TOKEN}"
+              fi
+              list_prior_tags "$CALLER_REPO" "$GH_TOKEN"
+            } | awk 'NF && !seen[$0]++'
           )
           echo "Fetched $fetched prior ZIP(s) for deltas"
         else
@@ -193,7 +285,8 @@ runs:
         TAG: ${{ inputs.tag }}
         CHANNEL: ${{ inputs.channel }}
         SPARKLE_PRIVATE_KEY: ${{ inputs.sparkle-private-key }}
-        REPOSITORY: ${{ github.repository }}
+        DOWNLOAD_REPO: ${{ steps.meta.outputs.download-repository }}
+        CALLER_REPO: ${{ github.repository }}
         ASSET_PREFIX: ${{ inputs.asset-prefix }}
         RELEASE_HTML_URL: ${{ inputs.release-html-url }}
       run: |
@@ -204,11 +297,11 @@ runs:
         umask 077
         printf '%s\n' "$SPARKLE_PRIVATE_KEY" > "$key_file"
 
-        download_prefix="https://github.com/${REPOSITORY}/releases/download/${TAG}/"
+        download_prefix="https://github.com/${DOWNLOAD_REPO}/releases/download/${TAG}/"
         if [[ -n "$RELEASE_HTML_URL" ]]; then
           link_url="$RELEASE_HTML_URL"
         else
-          link_url="https://github.com/${REPOSITORY}/releases/tag/${TAG}"
+          link_url="https://github.com/${CALLER_REPO}/releases/tag/${TAG}"
         fi
 
         args=(
@@ -233,9 +326,11 @@ runs:
         "$SPARKLE_BIN/generate_appcast" "${args[@]}" "$SPARKLE_ARCHIVES"
 
         # generate_appcast applies one --download-url-prefix to every archive.
-        # Rewrite enclosure URLs so each Prefix_<tag>.zip resolves under that tag.
+        # Rewrite enclosure URLs so each Prefix_<tag>.zip resolves under that tag
+        # on the download repository. Historical enclosures on other hosts are
+        # left untouched.
         perl -i -pe \
-          's#(url="https://github.com/\Q'"$REPOSITORY"'\E/releases/download/)[^/]+/(\Q'"$ASSET_PREFIX"'\E_([^"]+)\.zip")#$1$3/$2#g' \
+          's#(url="https://github.com/\Q'"$DOWNLOAD_REPO"'\E/releases/download/)[^/]+/(\Q'"$ASSET_PREFIX"'\E_([^"]+)\.zip")#$1$3/$2#g' \
           "$SPARKLE_PAGES/appcast.xml"
 
         # Glob of every .delta under the archives dir (includes any prior-release deltas).
@@ -253,12 +348,15 @@ runs:
       env:
         TAG: ${{ inputs.tag }}
         CHANNEL: ${{ inputs.channel }}
-        GITHUB_TOKEN: ${{ github.token }}
+        FEED_REPO: ${{ steps.meta.outputs.feed-repository }}
+        UPDATES_TOKEN: ${{ inputs.updates-token }}
+        GH_TOKEN: ${{ github.token }}
       run: |
         set -euo pipefail
 
+        token="${UPDATES_TOKEN:-$GH_TOKEN}"
         work="$RUNNER_TEMP/gh-pages-work"
-        remote="https://x-access-token:${GITHUB_TOKEN}@github.com/${GITHUB_REPOSITORY}.git"
+        remote="https://x-access-token:${token}@github.com/${FEED_REPO}.git"
         max_attempts=5
         attempt=1
 
@@ -290,7 +388,7 @@ runs:
           git -C "$work" commit -m "chore(sparkle): publish appcast for ${TAG} (${CHANNEL})"
 
           if git -C "$work" push origin HEAD:gh-pages; then
-            echo "Published appcast to gh-pages"
+            echo "Published appcast to ${FEED_REPO}@gh-pages"
             exit 0
           fi
 
