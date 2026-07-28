@@ -24,6 +24,33 @@ uses: thaw-app/org-ci/actions/sparkle-release@<sha>
 | `actions/notarize-and-validate` | notarytool + staple + Gatekeeper |
 | `actions/sparkle-release` | Sparkle ZIP, appcast, optional gh-pages publish |
 
+### Sparkle updates repository
+
+By default, `sparkle-release` keeps ZIP download URLs and appcast Pages on the
+**caller** repository (legacy). To split installers from update payloads:
+
+| Artifact | Typical home |
+| --- | --- |
+| DMG / human GitHub Release | Application repo (for example `thaw-app/Thaw`) |
+| Sparkle ZIP, deltas, `appcast.xml` | Dedicated updates repo (for example `thaw-app/updates`) |
+
+Pass:
+
+```yaml
+- uses: thaw-app/org-ci/actions/sparkle-release@<sha>
+  with:
+    # …
+    updates-repository: thaw-app/updates
+    updates-token: ${{ secrets.UPDATES_GITHUB_TOKEN }}
+    release-html-url: https://github.com/${{ github.repository }}/releases/tag/${{ inputs.tag }}
+    publish-appcast: "true"
+```
+
+`updates-token` needs `contents: write` on the updates repo (release assets are
+uploaded by the caller workflow; this token is used for appcast `gh-pages`
+push and for reading the existing feed / prior ZIPs). When `updates-repository`
+is empty, behavior is unchanged and `github.token` is enough.
+
 ## Job contract
 
 All five actions in a ship pipeline **must run in the same job** (shared `$RUNNER_TEMP` keychain, exported app, Sparkle env).
@@ -40,7 +67,8 @@ Typical order:
 
 ### Permissions
 
-- Release / Sparkle publish: `permissions: contents: write` (GitHub Release assets + `gh-pages` appcast push)
+- Release / Sparkle publish on the caller repo: `permissions: contents: write` (DMG / GitHub Release)
+- Dedicated updates feed: a PAT or GitHub App token with `contents: write` on the updates repo (`updates-token`), plus caller `contents: write` for the DMG release
 - Read-only DMG builds can omit write if they only upload artifacts
 
 ### Concurrency
