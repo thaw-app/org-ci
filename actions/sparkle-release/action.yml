@@ -101,6 +101,13 @@ runs:
       run: |
         set -euo pipefail
 
+        # Unconditional: the default flipped from "true" to "false", so a
+        # caller that never passed the input used to publish and now does not.
+        # That change is invisible without a notice, because an omitted input
+        # is indistinguishable from an explicit "false".
+        echo "::notice::sparkle-release no longer publishes the appcast. \
+        Push the appcast-path output with actions/publish-file-to-branch."
+
         if [[ "$PUBLISH_APPCAST" == "true" ]]; then
           echo "publish-appcast was removed from sparkle-release."
           echo "Publish the appcast-path output with:"

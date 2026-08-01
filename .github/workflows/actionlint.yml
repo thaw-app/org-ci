@@ -22,6 +22,9 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          # Read-only checkout, and a downloaded binary runs against it.
+          persist-credentials: false
 
       # Pinned release archive rather than piping the installer script from the
       # actionlint default branch: this repository holds the release actions, so

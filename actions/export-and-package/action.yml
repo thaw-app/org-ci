@@ -88,6 +88,9 @@ runs:
         repository: create-dmg/create-dmg
         ref: ${{ inputs.create-dmg-ref }}
         path: create-dmg
+        # This checkout is read-only, and ./create-dmg/create-dmg runs in this
+        # workspace afterwards. A persisted credential would be readable by it.
+        persist-credentials: false
 
     - name: Fetch DMG background from brand-assets
       if: inputs.dmg-background == ''
@@ -99,6 +102,7 @@ runs:
           ${{ inputs.brand-assets-background }}
         sparse-checkout-cone-mode: false
         path: brand-assets
+        persist-credentials: false
 
     - name: Export archive and create signed DMG
       shell: bash
