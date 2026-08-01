@@ -35,14 +35,12 @@ inputs:
 runs:
   using: composite
   steps:
-    - name: Cache SwiftPM
-      uses: actions/cache@v5
-      with:
-        path: ~/Library/Caches/org.swift.swiftpm
-        key: spm-${{ runner.os }}-${{ hashFiles('**/Package.resolved') }}
-        restore-keys: |
-          spm-${{ runner.os }}-
-
+    # No SwiftPM dependency cache here on purpose. This action builds the
+    # artifact that gets signed, notarized, and attested; a restored cache is
+    # attacker-writable input from other runs on the same repository, and
+    # `restore-keys` would fall back to a stale entry even on a key miss. The
+    # rebuild cost is a few minutes on a release that happens a handful of
+    # times a year.
     - name: xcodebuild archive
       shell: bash
       env:
@@ -72,6 +70,9 @@ runs:
           -destination platform=macOS
           -configuration "$CONFIGURATION"
           -archivePath "$ARCHIVE_PATH"
+          # Package.resolved is what the release SBOM is generated from, so the
+          # build must not silently resolve a different version than it records.
+          -onlyUsePackageVersionsFromResolvedFile
           "MACOSX_DEPLOYMENT_TARGET=$DEPLOYMENT_TARGET"
           "DEVELOPMENT_TEAM=$APPLE_TEAM_ID"
           CODE_SIGN_STYLE=Manual

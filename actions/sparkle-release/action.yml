@@ -24,6 +24,13 @@ inputs:
     description: Sparkle tools version (must match Package.resolved)
     required: false
     default: "2.9.3"
+  sparkle-sha256:
+    description: >-
+      SHA-256 of Sparkle-<version>.tar.xz. Bump together with sparkle-version.
+      generate_appcast runs with the EdDSA private key, so this archive is in
+      the update-signing trust path and must not be fetched unverified.
+    required: false
+    default: 74a07da821f92b79310009954c0e15f350173374a3abe39095b4fc5096916be6
   sparkle-private-key:
     description: EdDSA private key contents matching SUPublicEDKey
     required: true
@@ -142,16 +149,26 @@ runs:
       shell: bash
       env:
         SPARKLE_VERSION: ${{ inputs.sparkle-version }}
+        SPARKLE_SHA256: ${{ inputs.sparkle-sha256 }}
       run: |
         set -euo pipefail
+
+        if [[ -z "$SPARKLE_SHA256" ]]; then
+          echo "sparkle-sha256 must not be empty: generate_appcast runs with the"
+          echo "EdDSA private key and this archive must be verified."
+          exit 1
+        fi
 
         tools_dir="$RUNNER_TEMP/sparkle-tools"
         rm -rf "$tools_dir"
         mkdir -p "$tools_dir"
 
         archive="$RUNNER_TEMP/Sparkle-${SPARKLE_VERSION}.tar.xz"
-        curl -fsSL -o "$archive" \
+        curl -fsSL --retry 3 -o "$archive" \
           "https://github.com/sparkle-project/Sparkle/releases/download/${SPARKLE_VERSION}/Sparkle-${SPARKLE_VERSION}.tar.xz"
+        # Sparkle publishes no checksums file; this digest was recorded from the
+        # published asset, which GitHub keeps immutable once a release exists.
+        echo "${SPARKLE_SHA256}  ${archive}" | shasum -a 256 -c -
         tar -xJf "$archive" -C "$tools_dir"
 
         if [[ -x "$tools_dir/bin/generate_appcast" ]]; then

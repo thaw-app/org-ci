@@ -31,6 +31,13 @@ inputs:
     description: Path within brand-assets for the DMG background image
     required: false
     default: packaging/dmg-background@2x.png
+  create-dmg-ref:
+    description: >-
+      Commit SHA of create-dmg/create-dmg to package with. Pinned rather than
+      brew-installed: create-dmg runs inside the build that produces the signed,
+      attested DMG.
+    required: false
+    default: a2b71d0fda6d0df2a86dc7f67082d4d73e84c59f # v1.3.0
   dmg-background:
     description: Workspace-relative DMG background path (skips brand-assets fetch when set)
     required: false
@@ -47,13 +54,20 @@ inputs:
 runs:
   using: composite
   steps:
-    - name: Install create-dmg
-      shell: bash
-      run: brew install create-dmg
+    # Pinned checkout rather than `brew install create-dmg`: an unpinned formula
+    # would run arbitrary versions inside the build that produces the signed DMG.
+    # create-dmg locates its support/ directory next to the script, so it runs
+    # in place from the checkout.
+    - name: Fetch create-dmg
+      uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+      with:
+        repository: create-dmg/create-dmg
+        ref: ${{ inputs.create-dmg-ref }}
+        path: create-dmg
 
     - name: Fetch DMG background from brand-assets
       if: inputs.dmg-background == ''
-      uses: actions/checkout@v7
+      uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
       with:
         repository: ${{ inputs.brand-assets-repository }}
         ref: ${{ inputs.brand-assets-ref }}
@@ -108,7 +122,7 @@ runs:
         cp -R "$EXPORT_PATH/$APP_NAME" "$staging/$APP_NAME"
         ln -s /Applications "$staging/Applications"
 
-        create-dmg \
+        ./create-dmg/create-dmg \
           --volname "$vol_name" \
           --background "$dmg_bg" \
           --window-size "$WINDOW_WIDTH" "$WINDOW_HEIGHT" \
