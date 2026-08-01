@@ -1,5 +1,14 @@
 name: Export Archive and Package DMG
-description: Export an Xcode archive, verify signature, and create a signed DMG
+description: >-
+  Export an Xcode archive, notarize and staple the .app, then create a signed
+  DMG around the stapled app.
+
+# The app is notarized here rather than only as part of the DMG. Stapling the
+# DMG alone leaves the enclosed .app without a ticket, so once a user drags it
+# out, Gatekeeper has to reach Apple to check it — and first launch fails
+# offline with "cannot check it for malicious software". The DMG is still
+# notarized and stapled afterwards by notarize-and-validate; that is two notary
+# submissions per build, which is Apple's documented order.
 
 inputs:
   apple-team-id:
@@ -50,6 +59,21 @@ inputs:
     description: create-dmg window height
     required: false
     default: "300"
+  keychain-path:
+    description: Keychain holding the notarytool-profile (must match configure-signing)
+    required: false
+    default: ""
+  notarize-timeout:
+    description: Maximum time to wait for the notary service on the .app submission
+    required: false
+    default: 30m
+  notarize-app:
+    description: >-
+      Notarize and staple the .app before packaging. Only turn this off for
+      builds that are never distributed; an unstapled app fails Gatekeeper on
+      first launch without network access.
+    required: false
+    default: "true"
 
 runs:
   using: composite
@@ -88,6 +112,9 @@ runs:
         BRAND_ASSETS_BACKGROUND: ${{ inputs.brand-assets-background }}
         WINDOW_WIDTH: ${{ inputs.window-width }}
         WINDOW_HEIGHT: ${{ inputs.window-height }}
+        KEYCHAIN_PATH_INPUT: ${{ inputs.keychain-path }}
+        NOTARIZE_TIMEOUT: ${{ inputs.notarize-timeout }}
+        NOTARIZE_APP: ${{ inputs.notarize-app }}
       run: |
         set -euo pipefail
 
@@ -107,6 +134,46 @@ runs:
           -exportOptionsPlist "$export_plist"
 
         codesign -vvv --deep --strict "$EXPORT_PATH/$APP_NAME"
+
+        # Notarize and staple the .app *before* it goes into the DMG. A ticket
+        # stapled to the DMG does not travel with the app once the user drags it
+        # out, so this is what makes offline first launch work.
+        if [[ "$NOTARIZE_APP" == "true" ]]; then
+          if [[ -n "$KEYCHAIN_PATH_INPUT" ]]; then
+            keychain="$KEYCHAIN_PATH_INPUT"
+          else
+            keychain="$RUNNER_TEMP/buildagent.keychain"
+          fi
+
+          app_zip="$RUNNER_TEMP/notarize-app.zip"
+          rm -f "$app_zip"
+          ditto -c -k --sequesterRsrc --keepParent \
+            "$EXPORT_PATH/$APP_NAME" "$app_zip"
+
+          app_submission=$(xcrun notarytool submit "$app_zip" \
+            --keychain-profile "notarytool-profile" \
+            --keychain "$keychain" \
+            --output-format json \
+            --timeout "$NOTARIZE_TIMEOUT" \
+            --wait)
+          echo "$app_submission"
+
+          app_submission_id=$(echo "$app_submission" | jq -r '.id')
+          app_status=$(echo "$app_submission" | jq -r '.status')
+
+          if [[ "$app_status" != "Accepted" ]]; then
+            echo "App notarization failed with status: $app_status"
+            xcrun notarytool log "$app_submission_id" \
+              --keychain-profile "notarytool-profile" \
+              --keychain "$keychain" || true
+            exit 1
+          fi
+
+          xcrun stapler staple "$EXPORT_PATH/$APP_NAME"
+          xcrun stapler validate "$EXPORT_PATH/$APP_NAME"
+        else
+          echo "Skipping app notarization (notarize-app=${NOTARIZE_APP})"
+        fi
 
         vol_name="${APP_NAME%.app}"
         staging="$RUNNER_TEMP/dmg-staging"

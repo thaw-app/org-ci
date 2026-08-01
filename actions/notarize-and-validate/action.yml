@@ -69,4 +69,11 @@ runs:
 
         xcrun stapler staple "build/$DMG_NAME"
         xcrun stapler validate "build/$DMG_NAME"
+
+        # Regression guard. The app packaged into the DMG must carry its own
+        # ticket (stapled by export-and-package), otherwise Gatekeeper has to
+        # reach Apple the first time a user launches it out of the DMG and the
+        # launch fails offline. Stapling the DMG alone does not cover this.
+        xcrun stapler validate "$EXPORT_PATH/$APP_NAME"
+
         spctl --assess --type execute --verbose "$EXPORT_PATH/$APP_NAME"

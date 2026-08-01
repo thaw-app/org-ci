@@ -132,7 +132,9 @@ runs:
           exit 1
         fi
 
-        # Ticket from DMG notarization applies to the same CDHash.
+        # export-and-package already staples the app. Kept as a safety net for
+        # callers running with notarize-app=false: the ticket from the DMG
+        # notarization applies to the same CDHash, and re-stapling is idempotent.
         xcrun stapler staple "$app_path"
         xcrun stapler validate "$app_path"
 
