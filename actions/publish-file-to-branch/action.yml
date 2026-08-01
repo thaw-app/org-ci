@@ -1,0 +1,135 @@
+name: Publish File To Branch
+description: >-
+  Commit a single file onto a branch of a GitHub repository, retrying on push
+  conflict. Used for appcast publishing (gh-pages) and legacy feed mirroring.
+
+# One implementation of the clone / commit / retry-push loop. It previously
+# existed three times: once here in sparkle-release, and twice in the Thaw
+# release workflow (gh-pages appcast + legacy mirror), so a bug in the retry
+# logic was a three-place fix.
+
+inputs:
+  repository:
+    description: Target repository as owner/name
+    required: true
+  branch:
+    description: Branch to publish onto (for example, gh-pages or main)
+    required: true
+  source-path:
+    description: Path to the file to publish, relative to the workspace
+    required: true
+  destination-path:
+    description: Path the file should take inside the target repository
+    required: true
+  token:
+    description: Token with contents:write on the target repository
+    required: true
+  commit-message:
+    description: Commit message for the publish commit
+    required: true
+  create-branch-if-missing:
+    description: >-
+      Create the branch as an orphan when it does not exist. Correct for a
+      gh-pages feed; leave false for a branch that must already exist, so a
+      typo cannot silently orphan a real branch.
+    required: false
+    default: "false"
+  gitignore-allowlist:
+    description: >-
+      Newline-separated .gitignore body written when the branch has none, to
+      keep a Pages branch to just the published file. Empty writes nothing.
+    required: false
+    default: ""
+  max-attempts:
+    description: Push attempts before failing, with linear backoff between them
+    required: false
+    default: "5"
+
+outputs:
+  pushed:
+    description: "true when a commit was pushed, false when the file was unchanged"
+    value: ${{ steps.publish.outputs.pushed }}
+
+runs:
+  using: composite
+  steps:
+    - name: Publish file
+      id: publish
+      shell: bash
+      env:
+        TARGET_REPO: ${{ inputs.repository }}
+        TARGET_BRANCH: ${{ inputs.branch }}
+        SOURCE_PATH: ${{ inputs.source-path }}
+        DEST_PATH: ${{ inputs.destination-path }}
+        TOKEN: ${{ inputs.token }}
+        COMMIT_MESSAGE: ${{ inputs.commit-message }}
+        CREATE_BRANCH: ${{ inputs.create-branch-if-missing }}
+        GITIGNORE_ALLOWLIST: ${{ inputs.gitignore-allowlist }}
+        MAX_ATTEMPTS: ${{ inputs.max-attempts }}
+      run: |
+        set -euo pipefail
+
+        if [[ ! -f "$SOURCE_PATH" ]]; then
+          echo "Missing source file: $SOURCE_PATH"
+          exit 1
+        fi
+
+        # Distinct work dir per target so two publishes in one job cannot
+        # collide on $RUNNER_TEMP.
+        slug="$(printf '%s' "${TARGET_REPO}-${TARGET_BRANCH}" | tr -c 'A-Za-z0-9._-' '_')"
+        work="$RUNNER_TEMP/publish-${slug}"
+        remote="https://x-access-token:${TOKEN}@github.com/${TARGET_REPO}.git"
+        attempt=1
+
+        while true; do
+          rm -rf "$work"
+
+          if git clone --depth 1 --branch "$TARGET_BRANCH" "$remote" "$work" 2>/dev/null; then
+            :
+          elif [[ "$CREATE_BRANCH" == "true" ]]; then
+            rm -rf "$work"
+            git clone --depth 1 "$remote" "$work" 2>/dev/null
+            git -C "$work" checkout --orphan "$TARGET_BRANCH"
+            git -C "$work" rm -rf . >/dev/null 2>&1 || true
+          else
+            echo "Branch ${TARGET_BRANCH} not found on ${TARGET_REPO}"
+            echo "Set create-branch-if-missing to create it as an orphan."
+            exit 1
+          fi
+
+          mkdir -p "$(dirname "$work/$DEST_PATH")"
+          cp "$SOURCE_PATH" "$work/$DEST_PATH"
+
+          paths=("$DEST_PATH")
+          if [[ -n "$GITIGNORE_ALLOWLIST" && ! -f "$work/.gitignore" ]]; then
+            printf '%s\n' "$GITIGNORE_ALLOWLIST" > "$work/.gitignore"
+            paths+=(.gitignore)
+          fi
+
+          git -C "$work" config user.name "github-actions[bot]"
+          git -C "$work" config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git -C "$work" add -- "${paths[@]}"
+
+          if git -C "$work" diff --staged --quiet; then
+            echo "${DEST_PATH} unchanged on ${TARGET_REPO}@${TARGET_BRANCH}"
+            echo "pushed=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          git -C "$work" commit -m "$COMMIT_MESSAGE"
+
+          if git -C "$work" push origin "HEAD:${TARGET_BRANCH}"; then
+            echo "Published ${DEST_PATH} to ${TARGET_REPO}@${TARGET_BRANCH}"
+            echo "pushed=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          if [[ "$attempt" -ge "$MAX_ATTEMPTS" ]]; then
+            echo "Failed to push ${TARGET_BRANCH} after ${MAX_ATTEMPTS} attempts"
+            exit 1
+          fi
+
+          echo "push failed (attempt ${attempt}/${MAX_ATTEMPTS}); refetching…"
+          attempt=$((attempt + 1))
+          sleep $((attempt * 2))
+        done
