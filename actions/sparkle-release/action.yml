@@ -1,7 +1,7 @@
 name: Sparkle Release
 description: >-
-  Package a notarized app ZIP, sign Sparkle updates, and optionally refresh
-  appcast.xml on gh-pages (app repo or a dedicated updates repository).
+  Package a notarized app ZIP and generate a signed appcast.xml. Publishing the
+  result is the caller's job — see actions/publish-file-to-branch.
 
 inputs:
   tag:
@@ -24,6 +24,13 @@ inputs:
     description: Sparkle tools version (must match Package.resolved)
     required: false
     default: "2.9.3"
+  sparkle-sha256:
+    description: >-
+      SHA-256 of Sparkle-<version>.tar.xz. Bump together with sparkle-version.
+      generate_appcast runs with the EdDSA private key, so this archive is in
+      the update-signing trust path and must not be fetched unverified.
+    required: false
+    default: 74a07da821f92b79310009954c0e15f350173374a3abe39095b4fc5096916be6
   sparkle-private-key:
     description: EdDSA private key contents matching SUPublicEDKey
     required: true
@@ -32,9 +39,13 @@ inputs:
     required: false
     default: "3"
   publish-appcast:
-    description: Push updated appcast.xml to the feed repository gh-pages branch
+    description: >-
+      Removed. Publishing now lives in actions/publish-file-to-branch so the
+      clone/commit/retry logic has one implementation and callers can push to
+      more than one feed. Pass the appcast-path output to that action. Setting
+      this to "true" fails rather than silently not publishing.
     required: false
-    default: "true"
+    default: "false"
   export-path:
     description: Directory containing the exported .app
     required: false
@@ -52,9 +63,10 @@ inputs:
     default: ""
   updates-token:
     description: >-
-      Token with contents:write on updates-repository (required when
-      updates-repository is set and publish-appcast is true). Public reads may
-      fall back to github.token.
+      Token for reading the existing feed and prior ZIPs on updates-repository.
+      Pass the same token to publish-file-to-branch, which needs
+      contents:write, to push the generated appcast. Public reads may fall back
+      to github.token.
     required: false
     default: ""
 
@@ -89,13 +101,23 @@ runs:
       run: |
         set -euo pipefail
 
+        # Unconditional: the default flipped from "true" to "false", so a
+        # caller that never passed the input used to publish and now does not.
+        # That change is invisible without a notice, because an omitted input
+        # is indistinguishable from an explicit "false".
+        echo "::notice::sparkle-release no longer publishes the appcast. \
+        Push the appcast-path output with actions/publish-file-to-branch."
+
+        if [[ "$PUBLISH_APPCAST" == "true" ]]; then
+          echo "publish-appcast was removed from sparkle-release."
+          echo "Publish the appcast-path output with:"
+          echo "  uses: thaw-app/org-ci/actions/publish-file-to-branch@<sha>"
+          exit 1
+        fi
+
         if [[ -n "$UPDATES_REPO" ]]; then
           feed_repo="$UPDATES_REPO"
           download_repo="$UPDATES_REPO"
-          if [[ "$PUBLISH_APPCAST" == "true" && -z "$UPDATES_TOKEN" ]]; then
-            echo "updates-token is required when updates-repository is set and publish-appcast is true"
-            exit 1
-          fi
         else
           feed_repo="$CALLER_REPO"
           download_repo="$CALLER_REPO"
@@ -125,7 +147,9 @@ runs:
           exit 1
         fi
 
-        # Ticket from DMG notarization applies to the same CDHash.
+        # export-and-package already staples the app. Kept as a safety net for
+        # callers running with notarize-app=false: the ticket from the DMG
+        # notarization applies to the same CDHash, and re-stapling is idempotent.
         xcrun stapler staple "$app_path"
         xcrun stapler validate "$app_path"
 
@@ -142,16 +166,26 @@ runs:
       shell: bash
       env:
         SPARKLE_VERSION: ${{ inputs.sparkle-version }}
+        SPARKLE_SHA256: ${{ inputs.sparkle-sha256 }}
       run: |
         set -euo pipefail
+
+        if [[ -z "$SPARKLE_SHA256" ]]; then
+          echo "sparkle-sha256 must not be empty: generate_appcast runs with the"
+          echo "EdDSA private key and this archive must be verified."
+          exit 1
+        fi
 
         tools_dir="$RUNNER_TEMP/sparkle-tools"
         rm -rf "$tools_dir"
         mkdir -p "$tools_dir"
 
         archive="$RUNNER_TEMP/Sparkle-${SPARKLE_VERSION}.tar.xz"
-        curl -fsSL -o "$archive" \
+        curl -fsSL --retry 3 -o "$archive" \
           "https://github.com/sparkle-project/Sparkle/releases/download/${SPARKLE_VERSION}/Sparkle-${SPARKLE_VERSION}.tar.xz"
+        # Sparkle publishes no checksums file; this digest was recorded from the
+        # published asset, which GitHub keeps immutable once a release exists.
+        echo "${SPARKLE_SHA256}  ${archive}" | shasum -a 256 -c -
         tar -xJf "$archive" -C "$tools_dir"
 
         if [[ -x "$tools_dir/bin/generate_appcast" ]]; then
@@ -341,63 +375,3 @@ runs:
 
         echo "Appcast head:"
         head -n 60 "$SPARKLE_PAGES/appcast.xml"
-
-    - name: Publish appcast to gh-pages
-      if: inputs.publish-appcast == 'true'
-      shell: bash
-      env:
-        TAG: ${{ inputs.tag }}
-        CHANNEL: ${{ inputs.channel }}
-        FEED_REPO: ${{ steps.meta.outputs.feed-repository }}
-        UPDATES_TOKEN: ${{ inputs.updates-token }}
-        GH_TOKEN: ${{ github.token }}
-      run: |
-        set -euo pipefail
-
-        token="${UPDATES_TOKEN:-$GH_TOKEN}"
-        work="$RUNNER_TEMP/gh-pages-work"
-        remote="https://x-access-token:${token}@github.com/${FEED_REPO}.git"
-        max_attempts=5
-        attempt=1
-
-        while true; do
-          rm -rf "$work"
-          mkdir -p "$work"
-
-          if git clone --depth 1 --branch gh-pages "$remote" "$work" 2>/dev/null; then
-            :
-          else
-            git clone --depth 1 "$remote" "$work"
-            git -C "$work" checkout --orphan gh-pages
-            git -C "$work" rm -rf . >/dev/null 2>&1 || true
-          fi
-
-          cp "$SPARKLE_PAGES/appcast.xml" "$work/appcast.xml"
-          if [[ ! -f "$work/.gitignore" ]]; then
-            printf '*\n!appcast.xml\n!.gitignore\n' > "$work/.gitignore"
-          fi
-
-          git -C "$work" config user.name "github-actions[bot]"
-          git -C "$work" config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git -C "$work" add appcast.xml .gitignore
-          if git -C "$work" diff --staged --quiet; then
-            echo "appcast.xml unchanged"
-            exit 0
-          fi
-
-          git -C "$work" commit -m "chore(sparkle): publish appcast for ${TAG} (${CHANNEL})"
-
-          if git -C "$work" push origin HEAD:gh-pages; then
-            echo "Published appcast to ${FEED_REPO}@gh-pages"
-            exit 0
-          fi
-
-          if [[ "$attempt" -ge "$max_attempts" ]]; then
-            echo "Failed to push gh-pages after $max_attempts attempts"
-            exit 1
-          fi
-
-          echo "gh-pages push failed (attempt $attempt/$max_attempts); refetching…"
-          attempt=$((attempt + 1))
-          sleep $((attempt * 2))
-        done

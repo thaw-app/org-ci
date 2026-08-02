@@ -1,5 +1,14 @@
 name: Export Archive and Package DMG
-description: Export an Xcode archive, verify signature, and create a signed DMG
+description: >-
+  Export an Xcode archive, notarize and staple the .app, then create a signed
+  DMG around the stapled app.
+
+# The app is notarized here rather than only as part of the DMG. Stapling the
+# DMG alone leaves the enclosed .app without a ticket, so once a user drags it
+# out, Gatekeeper has to reach Apple to check it — and first launch fails
+# offline with "cannot check it for malicious software". The DMG is still
+# notarized and stapled afterwards by notarize-and-validate; that is two notary
+# submissions per build, which is Apple's documented order.
 
 inputs:
   apple-team-id:
@@ -31,6 +40,13 @@ inputs:
     description: Path within brand-assets for the DMG background image
     required: false
     default: packaging/dmg-background@2x.png
+  create-dmg-ref:
+    description: >-
+      Commit SHA of create-dmg/create-dmg to package with. Pinned rather than
+      brew-installed: create-dmg runs inside the build that produces the signed,
+      attested DMG.
+    required: false
+    default: a2b71d0fda6d0df2a86dc7f67082d4d73e84c59f # v1.3.0
   dmg-background:
     description: Workspace-relative DMG background path (skips brand-assets fetch when set)
     required: false
@@ -43,17 +59,42 @@ inputs:
     description: create-dmg window height
     required: false
     default: "300"
+  keychain-path:
+    description: Keychain holding the notarytool-profile (must match configure-signing)
+    required: false
+    default: ""
+  notarize-timeout:
+    description: Maximum time to wait for the notary service on the .app submission
+    required: false
+    default: 30m
+  notarize-app:
+    description: >-
+      Notarize and staple the .app before packaging. Only turn this off for
+      builds that are never distributed; an unstapled app fails Gatekeeper on
+      first launch without network access.
+    required: false
+    default: "true"
 
 runs:
   using: composite
   steps:
-    - name: Install create-dmg
-      shell: bash
-      run: brew install create-dmg
+    # Pinned checkout rather than `brew install create-dmg`: an unpinned formula
+    # would run arbitrary versions inside the build that produces the signed DMG.
+    # create-dmg locates its support/ directory next to the script, so it runs
+    # in place from the checkout.
+    - name: Fetch create-dmg
+      uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+      with:
+        repository: create-dmg/create-dmg
+        ref: ${{ inputs.create-dmg-ref }}
+        path: create-dmg
+        # This checkout is read-only, and ./create-dmg/create-dmg runs in this
+        # workspace afterwards. A persisted credential would be readable by it.
+        persist-credentials: false
 
     - name: Fetch DMG background from brand-assets
       if: inputs.dmg-background == ''
-      uses: actions/checkout@v7
+      uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
       with:
         repository: ${{ inputs.brand-assets-repository }}
         ref: ${{ inputs.brand-assets-ref }}
@@ -61,6 +102,7 @@ runs:
           ${{ inputs.brand-assets-background }}
         sparse-checkout-cone-mode: false
         path: brand-assets
+        persist-credentials: false
 
     - name: Export archive and create signed DMG
       shell: bash
@@ -74,6 +116,9 @@ runs:
         BRAND_ASSETS_BACKGROUND: ${{ inputs.brand-assets-background }}
         WINDOW_WIDTH: ${{ inputs.window-width }}
         WINDOW_HEIGHT: ${{ inputs.window-height }}
+        KEYCHAIN_PATH_INPUT: ${{ inputs.keychain-path }}
+        NOTARIZE_TIMEOUT: ${{ inputs.notarize-timeout }}
+        NOTARIZE_APP: ${{ inputs.notarize-app }}
       run: |
         set -euo pipefail
 
@@ -94,6 +139,46 @@ runs:
 
         codesign -vvv --deep --strict "$EXPORT_PATH/$APP_NAME"
 
+        # Notarize and staple the .app *before* it goes into the DMG. A ticket
+        # stapled to the DMG does not travel with the app once the user drags it
+        # out, so this is what makes offline first launch work.
+        if [[ "$NOTARIZE_APP" == "true" ]]; then
+          if [[ -n "$KEYCHAIN_PATH_INPUT" ]]; then
+            keychain="$KEYCHAIN_PATH_INPUT"
+          else
+            keychain="$RUNNER_TEMP/buildagent.keychain"
+          fi
+
+          app_zip="$RUNNER_TEMP/notarize-app.zip"
+          rm -f "$app_zip"
+          ditto -c -k --sequesterRsrc --keepParent \
+            "$EXPORT_PATH/$APP_NAME" "$app_zip"
+
+          app_submission=$(xcrun notarytool submit "$app_zip" \
+            --keychain-profile "notarytool-profile" \
+            --keychain "$keychain" \
+            --output-format json \
+            --timeout "$NOTARIZE_TIMEOUT" \
+            --wait)
+          echo "$app_submission"
+
+          app_submission_id=$(echo "$app_submission" | jq -r '.id')
+          app_status=$(echo "$app_submission" | jq -r '.status')
+
+          if [[ "$app_status" != "Accepted" ]]; then
+            echo "App notarization failed with status: $app_status"
+            xcrun notarytool log "$app_submission_id" \
+              --keychain-profile "notarytool-profile" \
+              --keychain "$keychain" || true
+            exit 1
+          fi
+
+          xcrun stapler staple "$EXPORT_PATH/$APP_NAME"
+          xcrun stapler validate "$EXPORT_PATH/$APP_NAME"
+        else
+          echo "Skipping app notarization (notarize-app=${NOTARIZE_APP})"
+        fi
+
         vol_name="${APP_NAME%.app}"
         staging="$RUNNER_TEMP/dmg-staging"
         if [[ -n "$DMG_BACKGROUND_INPUT" ]]; then
@@ -108,7 +193,7 @@ runs:
         cp -R "$EXPORT_PATH/$APP_NAME" "$staging/$APP_NAME"
         ln -s /Applications "$staging/Applications"
 
-        create-dmg \
+        ./create-dmg/create-dmg \
           --volname "$vol_name" \
           --background "$dmg_bg" \
           --window-size "$WINDOW_WIDTH" "$WINDOW_HEIGHT" \

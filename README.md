@@ -10,6 +10,7 @@ uses: thaw-app/org-ci/actions/build@<sha>
 uses: thaw-app/org-ci/actions/export-and-package@<sha>
 uses: thaw-app/org-ci/actions/notarize-and-validate@<sha>
 uses: thaw-app/org-ci/actions/sparkle-release@<sha>
+uses: thaw-app/org-ci/actions/publish-file-to-branch@<sha>
 ```
 
 `export-and-package` defaults to fetching DMG art from the public org repo [`thaw-app/brand-assets`](https://github.com/thaw-app/brand-assets). Override `brand-assets-repository` / `dmg-background` if needed.
@@ -22,7 +23,8 @@ uses: thaw-app/org-ci/actions/sparkle-release@<sha>
 | `actions/build` | `xcodebuild archive` (Developer ID, hardened runtime) |
 | `actions/export-and-package` | Export + signed DMG |
 | `actions/notarize-and-validate` | notarytool + staple + Gatekeeper |
-| `actions/sparkle-release` | Sparkle ZIP, appcast, optional gh-pages publish |
+| `actions/sparkle-release` | Sparkle ZIP + signed `appcast.xml` (does not publish) |
+| `actions/publish-file-to-branch` | Commit one file onto a branch, retrying on push conflict |
 
 ### Sparkle updates repository
 
@@ -43,25 +45,48 @@ Pass:
     updates-repository: thaw-app/updates
     updates-token: ${{ secrets.UPDATES_GITHUB_TOKEN }}
     release-html-url: https://github.com/${{ github.repository }}/releases/tag/${{ inputs.tag }}
-    publish-appcast: "true"
 ```
 
-`updates-token` needs `contents: write` on the updates repo (release assets are
-uploaded by the caller workflow; this token is used for appcast `gh-pages`
-push and for reading the existing feed / prior ZIPs). When `updates-repository`
-is empty, behavior is unchanged and `github.token` is enough.
+`sparkle-release` generates the appcast but does not publish it. Push the
+`appcast-path` output yourself, which lets one run update several feeds:
+
+```yaml
+- uses: thaw-app/org-ci/actions/publish-file-to-branch@<sha>
+  with:
+    repository: thaw-app/updates
+    branch: gh-pages
+    source-path: ${{ steps.sparkle.outputs.appcast-path }}
+    destination-path: appcast.xml
+    token: ${{ secrets.UPDATES_GITHUB_TOKEN }}
+    commit-message: "chore(sparkle): publish appcast for ${{ inputs.tag }}"
+    create-branch-if-missing: "true"
+    gitignore-allowlist: |
+      *
+      !appcast.xml
+      !.gitignore
+```
+
+`updates-token` reads the existing feed and prior ZIPs. The token passed to
+`publish-file-to-branch` needs `contents: write` on the target repo. When
+`updates-repository` is empty, behavior is unchanged and `github.token` is
+enough.
 
 ## Job contract
 
-All five actions in a ship pipeline **must run in the same job** (shared `$RUNNER_TEMP` keychain, exported app, Sparkle env).
+The build actions in a ship pipeline **must run in the same job** (shared `$RUNNER_TEMP` keychain, exported app, Sparkle env).
 
 Typical order:
 
 1. `configure-signing`
 2. `build`
-3. `export-and-package`
-4. `notarize-and-validate`
+3. `export-and-package` (notarizes + staples the `.app`, then builds the DMG)
+4. `notarize-and-validate` (notarizes + staples the DMG)
 5. `sparkle-release` (optional)
+6. `publish-file-to-branch` (optional, once per feed)
+
+Two notary submissions per build is deliberate: stapling only the DMG leaves
+the enclosed `.app` without a ticket, so it fails Gatekeeper on first launch
+without network access.
 
 `configure-signing` and `notarize-and-validate` share a keychain path (default `$RUNNER_TEMP/buildagent.keychain`). Override both with the same `keychain-path` if needed.
 
@@ -81,7 +106,8 @@ concurrency:
   cancel-in-progress: false
 ```
 
-The publish step also retries refetch+push a few times on conflict.
+`publish-file-to-branch` retries refetch+push on conflict (`max-attempts`,
+default 5).
 
 ### Build notes
 

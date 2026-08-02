@@ -16,6 +16,13 @@ inputs:
     description: Keychain that holds the notarytool-profile (must match configure-signing)
     required: false
     default: ""
+  notarize-timeout:
+    description: >-
+      Maximum time to wait for the notary service. Without it, a stuck
+      submission blocks until the job timeout and holds the release
+      concurrency group.
+    required: false
+    default: 30m
 
 runs:
   using: composite
@@ -27,6 +34,7 @@ runs:
         APP_NAME: ${{ inputs.app-name }}
         EXPORT_PATH: ${{ inputs.export-path }}
         KEYCHAIN_PATH_INPUT: ${{ inputs.keychain-path }}
+        NOTARIZE_TIMEOUT: ${{ inputs.notarize-timeout }}
       run: |
         set -euo pipefail
 
@@ -40,6 +48,7 @@ runs:
           --keychain-profile "notarytool-profile" \
           --keychain "$keychain" \
           --output-format json \
+          --timeout "$NOTARIZE_TIMEOUT" \
           --wait)
         echo "$submission"
 
@@ -60,4 +69,11 @@ runs:
 
         xcrun stapler staple "build/$DMG_NAME"
         xcrun stapler validate "build/$DMG_NAME"
+
+        # Regression guard. The app packaged into the DMG must carry its own
+        # ticket (stapled by export-and-package), otherwise Gatekeeper has to
+        # reach Apple the first time a user launches it out of the DMG and the
+        # launch fails offline. Stapling the DMG alone does not cover this.
+        xcrun stapler validate "$EXPORT_PATH/$APP_NAME"
+
         spctl --assess --type execute --verbose "$EXPORT_PATH/$APP_NAME"
