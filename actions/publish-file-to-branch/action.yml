@@ -133,7 +133,6 @@ runs:
             exit 1
           fi
 
-          git -C "$work" config --local http.extraheader "$auth_header"
           git -C "$work" config user.name "github-actions[bot]"
           git -C "$work" config user.email "41898282+github-actions[bot]@users.noreply.github.com"
 
@@ -159,7 +158,8 @@ runs:
 
           git -C "$work" commit -m "$COMMIT_MESSAGE"
 
-          if push_output="$(git -C "$work" push origin "HEAD:${TARGET_BRANCH}" 2>&1)"; then
+          if push_output="$(git -C "$work" -c "http.extraheader=${auth_header}" \
+                push origin "HEAD:${TARGET_BRANCH}" 2>&1)"; then
             echo "$push_output"
             echo "Published ${DEST_PATH} to ${TARGET_REPO}@${TARGET_BRANCH}"
             echo "pushed=true" >> "$GITHUB_OUTPUT"
