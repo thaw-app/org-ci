@@ -54,6 +54,13 @@ inputs:
     description: Override sparkle --link HTML URL (defaults to this repo's tag page)
     required: false
     default: ""
+  release-notes:
+    description: >-
+      Release notes (Markdown/HTML) written into a same-basename .html file
+      next to the ZIP before generate_appcast runs, so Sparkle picks it up as
+      the appcast item's <description>. Empty skips the file entirely.
+    required: false
+    default: ""
   updates-repository:
     description: >-
       Owner/name hosting Sparkle ZIP/delta releases and appcast Pages
@@ -215,6 +222,7 @@ runs:
         CALLER_REPO: ${{ github.repository }}
         UPDATES_TOKEN: ${{ inputs.updates-token }}
         GH_TOKEN: ${{ github.token }}
+        RELEASE_NOTES: ${{ inputs.release-notes }}
       run: |
         set -euo pipefail
 
@@ -224,6 +232,13 @@ runs:
         mkdir -p "$archives" "$pages"
 
         cp "$ZIP_PATH" "$archives/"
+
+        # generate_appcast reads a same-basename .html file next to the archive
+        # as the appcast item's <description>. No native flag for this exists.
+        if [[ -n "$RELEASE_NOTES" ]]; then
+          html_name="${ASSET_PREFIX}_${TAG}.html"
+          printf '%s' "$RELEASE_NOTES" > "$archives/$html_name"
+        fi
 
         feed_token="${UPDATES_TOKEN:-$GH_TOKEN}"
         appcast_loaded=false
