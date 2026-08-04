@@ -56,9 +56,10 @@ inputs:
     default: ""
   release-notes:
     description: >-
-      Release notes (Markdown/HTML) written into a same-basename .html file
-      next to the ZIP before generate_appcast runs, so Sparkle picks it up as
-      the appcast item's <description>. Empty skips the file entirely.
+      Release notes for the appcast item <description>. Markdown is rendered to
+      HTML via the GitHub Markdown API (GFM) before generate_appcast reads the
+      same-basename .html sibling of the ZIP. Pass HTML if you already have it;
+      fragments that look like HTML are left as-is. Empty skips the file.
     required: false
     default: ""
   updates-repository:
@@ -235,9 +236,21 @@ runs:
 
         # generate_appcast reads a same-basename .html file next to the archive
         # as the appcast item's <description>. No native flag for this exists.
+        # Callers (CHANGELOG.md → release.yml) usually pass Markdown; Sparkle's
+        # UI renders the description as HTML, so raw ### / ** must be converted.
         if [[ -n "$RELEASE_NOTES" ]]; then
           html_name="${ASSET_PREFIX}_${TAG}.html"
-          printf '%s' "$RELEASE_NOTES" > "$archives/$html_name"
+          notes_file="$RUNNER_TEMP/${ASSET_PREFIX}_${TAG}.notes"
+          printf '%s' "$RELEASE_NOTES" > "$notes_file"
+          if grep -qE '<(h[1-6]|p|ul|ol|li|div|br|strong|em|table)[ >/]' "$notes_file"; then
+            cp "$notes_file" "$archives/$html_name"
+            echo "Release notes already look like HTML; writing as-is"
+          else
+            jq -n --rawfile text "$notes_file" '{text: $text, mode: "gfm"}' \
+              | gh api --method POST /markdown --input - > "$archives/$html_name"
+            echo "Rendered release notes Markdown to HTML via GitHub Markdown API"
+          fi
+          head -n 5 "$archives/$html_name" || true
         fi
 
         feed_token="${UPDATES_TOKEN:-$GH_TOKEN}"
