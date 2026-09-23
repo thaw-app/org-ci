@@ -109,10 +109,8 @@ runs:
       run: |
         set -euo pipefail
 
-        # Unconditional: the default flipped from "true" to "false", so a
-        # caller that never passed the input used to publish and now does not.
-        # That change is invisible without a notice, because an omitted input
-        # is indistinguishable from an explicit "false".
+        # Unconditional: an omitted input is indistinguishable from an
+        # explicit "false", so the removed default needs a notice either way.
         echo "::notice::sparkle-release no longer publishes the appcast. \
         Push the appcast-path output with actions/publish-file-to-branch."
 
@@ -155,9 +153,8 @@ runs:
           exit 1
         fi
 
-        # export-and-package already staples the app. Kept as a safety net for
-        # callers running with notarize-app=false: the ticket from the DMG
-        # notarization applies to the same CDHash, and re-stapling is idempotent.
+        # Safety net for callers running with notarize-app=false: the DMG
+        # ticket covers the same CDHash, and re-stapling is idempotent.
         xcrun stapler staple "$app_path"
         xcrun stapler validate "$app_path"
 
@@ -234,10 +231,8 @@ runs:
 
         cp "$ZIP_PATH" "$archives/"
 
-        # generate_appcast reads a same-basename .html file next to the archive
-        # as the appcast item's <description>. No native flag for this exists.
-        # Callers (CHANGELOG.md → release.yml) usually pass Markdown; Sparkle's
-        # UI renders the description as HTML, so raw ### / ** must be converted.
+        # generate_appcast reads a same-basename .html as the item's
+        # <description>. Callers pass Markdown; the UI renders HTML.
         if [[ -n "$RELEASE_NOTES" ]]; then
           html_name="${ASSET_PREFIX}_${TAG}.html"
           notes_file="$RUNNER_TEMP/${ASSET_PREFIX}_${TAG}.notes"
@@ -274,7 +269,6 @@ runs:
         fi
 
         if [[ "$appcast_loaded" != true ]]; then
-          # Escape XML specials in the stub title.
           title_escaped=$(
             printf '%s' "$APPCAST_TITLE" \
               | sed -e 's/&/\&amp;/g' -e 's/</\&lt;/g' -e 's/>/\&gt;/g' -e 's/"/\&quot;/g' -e "s/'/\&apos;/g"
@@ -312,6 +306,17 @@ runs:
             --jq '.[] | select(.isDraft == false) | .tagName' 2>/dev/null || true
         }
 
+        # The 2.x beta and 3.x alpha lines share one appcast but not a
+        # monotonic build number, so generate_appcast must see only one line.
+        channel_of_tag() {
+          case "$1" in
+            *-alpha.*|*-nightly.*) echo alpha ;;
+            *-beta.*|*-rc.*) echo beta ;;
+            *) echo stable ;;
+          esac
+        }
+        release_line="${CHANNEL:-stable}"
+
         # Only fetch prior ZIPs when an existing appcast is present. On a stub,
         # generate_appcast --channel would otherwise retag those ZIPs as the
         # current channel (e.g. beta).
@@ -329,9 +334,26 @@ runs:
                 list_prior_tags "$DOWNLOAD_REPO" "${UPDATES_TOKEN:-$GH_TOKEN}"
               fi
               list_prior_tags "$CALLER_REPO" "$GH_TOKEN"
-            } | awk 'NF && !seen[$0]++'
+            } | awk 'NF && !seen[$0]++' | while IFS= read -r prior_tag; do
+              if [[ "$(channel_of_tag "$prior_tag")" == "$release_line" ]]; then
+                printf '%s\n' "$prior_tag"
+              fi
+            done
           )
           echo "Fetched $fetched prior ZIP(s) for deltas"
+
+          # A caller may have staged a ZIP itself; drop other lines too.
+          for staged_zip in "$archives"/*.zip; do
+            [[ -e "$staged_zip" ]] || continue
+            staged_base="$(basename "$staged_zip")"
+            staged_tag="${staged_base#"$ASSET_PREFIX"_}"
+            staged_tag="${staged_tag%.zip}"
+            staged_line="$(channel_of_tag "$staged_tag")"
+            if [[ "$staged_line" != "$release_line" ]]; then
+              echo "Dropping cross-line archive $staged_base ($staged_line != $release_line)"
+              rm -f "$staged_zip"
+            fi
+          done
         else
           echo "Skipping prior ZIP fetch (stub appcast or gh unavailable)"
         fi
@@ -387,15 +409,13 @@ runs:
 
         "$SPARKLE_BIN/generate_appcast" "${args[@]}" "$SPARKLE_ARCHIVES"
 
-        # generate_appcast applies one --download-url-prefix to every archive.
-        # Rewrite enclosure URLs so each Prefix_<tag>.zip resolves under that tag
-        # on the download repository. Historical enclosures on other hosts are
-        # left untouched.
+        # generate_appcast applies one --download-url-prefix to every archive;
+        # rewrite each Prefix_<tag>.zip to resolve under its own tag.
         perl -i -pe \
           's#(url="https://github.com/\Q'"$DOWNLOAD_REPO"'\E/releases/download/)[^/]+/(\Q'"$ASSET_PREFIX"'\E_([^"]+)\.zip")#$1$3/$2#g' \
           "$SPARKLE_PAGES/appcast.xml"
 
-        # Glob of every .delta under the archives dir (includes any prior-release deltas).
+        # Includes prior-release deltas.
         delta_glob="$SPARKLE_ARCHIVES/*.delta"
         echo "appcast-path=$SPARKLE_PAGES/appcast.xml" >> "$GITHUB_OUTPUT"
         echo "delta-glob=$delta_glob" >> "$GITHUB_OUTPUT"
