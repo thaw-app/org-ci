@@ -21,14 +21,13 @@ jobs:
   actionlint:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           # Read-only checkout, and a downloaded binary runs against it.
           persist-credentials: false
 
-      # Pinned release archive rather than piping the installer script from the
-      # actionlint default branch: this repository holds the release actions, so
-      # its own tooling should meet the same bar.
+      # Pinned release archive, not the installer script: this repository holds the
+      # release actions, so its tooling meets the same bar.
       - name: Install actionlint
         shell: bash
         env:

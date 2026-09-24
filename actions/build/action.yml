@@ -35,12 +35,8 @@ inputs:
 runs:
   using: composite
   steps:
-    # No SwiftPM dependency cache here on purpose. This action builds the
-    # artifact that gets signed, notarized, and attested; a restored cache is
-    # attacker-writable input from other runs on the same repository, and
-    # `restore-keys` would fall back to a stale entry even on a key miss. The
-    # rebuild cost is a few minutes on a release that happens a handful of
-    # times a year.
+    # No SwiftPM cache: this builds the signed artifact, and a restored cache is
+    # input other runs can write. A release costs a few extra minutes instead.
     - name: xcodebuild archive
       shell: bash
       env:

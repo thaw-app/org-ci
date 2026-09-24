@@ -3,12 +3,8 @@ description: >-
   Export an Xcode archive, notarize and staple the .app, then create a signed
   DMG around the stapled app.
 
-# The app is notarized here rather than only as part of the DMG. Stapling the
-# DMG alone leaves the enclosed .app without a ticket, so once a user drags it
-# out, Gatekeeper has to reach Apple to check it — and first launch fails
-# offline with "cannot check it for malicious software". The DMG is still
-# notarized and stapled afterwards by notarize-and-validate; that is two notary
-# submissions per build, which is Apple's documented order.
+# Notarizes the .app itself: a ticket stapled only to the DMG doesn't travel with
+# the dragged-out app, so offline first launch fails. The DMG is notarized after.
 
 inputs:
   apple-team-id:
@@ -78,12 +74,10 @@ inputs:
 runs:
   using: composite
   steps:
-    # Pinned checkout rather than `brew install create-dmg`: an unpinned formula
-    # would run arbitrary versions inside the build that produces the signed DMG.
-    # create-dmg locates its support/ directory next to the script, so it runs
-    # in place from the checkout.
+    # Pinned create-dmg checkout, not an unpinned brew formula, run in place since
+    # it finds support/ next to the script.
     - name: Fetch create-dmg
-      uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+      uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       with:
         repository: create-dmg/create-dmg
         ref: ${{ inputs.create-dmg-ref }}
@@ -94,7 +88,7 @@ runs:
 
     - name: Fetch DMG background from brand-assets
       if: inputs.dmg-background == ''
-      uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+      uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       with:
         repository: ${{ inputs.brand-assets-repository }}
         ref: ${{ inputs.brand-assets-ref }}
@@ -139,9 +133,7 @@ runs:
 
         codesign -vvv --deep --strict "$EXPORT_PATH/$APP_NAME"
 
-        # Notarize and staple the .app *before* it goes into the DMG. A ticket
-        # stapled to the DMG does not travel with the app once the user drags it
-        # out, so this is what makes offline first launch work.
+        # Staple the .app before it goes in the DMG, so it launches offline once dragged out.
         if [[ "$NOTARIZE_APP" == "true" ]]; then
           if [[ -n "$KEYCHAIN_PATH_INPUT" ]]; then
             keychain="$KEYCHAIN_PATH_INPUT"

@@ -1,7 +1,7 @@
 name: Sparkle Release
 description: >-
   Package a notarized app ZIP and generate a signed appcast.xml. Publishing the
-  result is the caller's job — see actions/publish-file-to-branch.
+  result is the caller's job (see actions/publish-file-to-branch).
 
 inputs:
   tag:
@@ -317,9 +317,8 @@ runs:
         }
         release_line="${CHANNEL:-stable}"
 
-        # Only fetch prior ZIPs when an existing appcast is present. On a stub,
-        # generate_appcast --channel would otherwise retag those ZIPs as the
-        # current channel (e.g. beta).
+        # Fetch prior ZIPs only with an existing appcast; on a stub, generate_appcast
+        # --channel would retag them as the current channel.
         if [[ "$appcast_loaded" == true ]] && command -v gh >/dev/null 2>&1; then
           fetched=0
           while IFS= read -r release_tag; do
