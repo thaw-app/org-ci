@@ -26,9 +26,8 @@ jobs:
           # Read-only checkout, and a downloaded binary runs against it.
           persist-credentials: false
 
-      # Pinned release archive rather than piping the installer script from the
-      # actionlint default branch: this repository holds the release actions, so
-      # its own tooling should meet the same bar.
+      # Pinned release archive, not the installer script: this repository holds the
+      # release actions, so its tooling meets the same bar.
       - name: Install actionlint
         shell: bash
         env:
