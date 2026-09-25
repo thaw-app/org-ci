@@ -320,10 +320,29 @@ runs:
         # Fetch prior ZIPs only with an existing appcast; on a stub, generate_appcast
         # --channel would retag them as the current channel.
         if [[ "$appcast_loaded" == true ]] && command -v gh >/dev/null 2>&1; then
+          # generate_appcast refuses two archives with one bundle version,
+          # and a line can ship the same build twice (a re-tag without a
+          # bump). Keep the newest archive for each build and skip the rest.
+          bundle_version_of() {
+            local top
+            top="$(zipinfo -1 "$1" 2>/dev/null | sed -n 1p)"
+            [[ -n "$top" ]] || return 0
+            unzip -p "$1" "${top}Contents/Info.plist" 2>/dev/null \
+              | plutil -extract CFBundleVersion raw -o - - 2>/dev/null || true
+          }
+          seen_versions="$(bundle_version_of "$ZIP_PATH")"
           fetched=0
           while IFS= read -r release_tag; do
             [[ -z "$release_tag" || "$release_tag" == "$TAG" ]] && continue
             if download_prior_zip "$release_tag"; then
+              prior_zip="$archives/${ASSET_PREFIX}_${release_tag}.zip"
+              version="$(bundle_version_of "$prior_zip")"
+              if [[ -n "$version" ]] && grep -qxF "$version" <<< "$seen_versions"; then
+                echo "Skipping $release_tag: build $version is already in the set"
+                rm -f "$prior_zip"
+                continue
+              fi
+              seen_versions+=$'\n'"$version"
               fetched=$((fetched + 1))
             fi
             [[ "$fetched" -ge "$PREVIOUS_COUNT" ]] && break
