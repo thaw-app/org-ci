@@ -324,10 +324,13 @@ runs:
           # and a line can ship the same build twice (a re-tag without a
           # bump). Keep the newest archive for each build and skip the rest.
           bundle_version_of() {
-            local top
-            top="$(zipinfo -1 "$1" 2>/dev/null | sed -n 1p)"
-            [[ -n "$top" ]] || return 0
-            unzip -p "$1" "${top}Contents/Info.plist" 2>/dev/null \
+            local plist
+            plist="$(
+              zipinfo -1 "$1" 2>/dev/null |
+                awk '$0 ~ /^[^\/]+\.app\/Contents\/Info\.plist$/ { print; exit }'
+            )"
+            [[ -n "$plist" ]] || return 0
+            unzip -p "$1" "$plist" 2>/dev/null \
               | plutil -extract CFBundleVersion raw -o - - 2>/dev/null || true
           }
           seen_versions="$(bundle_version_of "$ZIP_PATH")"
