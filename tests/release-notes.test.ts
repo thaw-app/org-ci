@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdtemp, mkdir, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, mkdir, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
@@ -108,6 +108,40 @@ test("invalid tags fail before reading files, even with an override", async () =
     await assert.rejects(resolver.resolve({ ...request, tag, override: "Override" }), /single-line/);
   }
   assert.deepEqual(reader.calls, []);
+});
+
+test("filesystem reader rejects absolute, escaping, and external symlink paths", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "release-notes-paths-"));
+  const workspace = join(directory, "workspace");
+  try {
+    await mkdir(workspace);
+    await mkdir(join(directory, "workspace-other"));
+    await writeFile(join(workspace, "CHANGELOG.md"), "## [1.0.0]\nInside");
+    await writeFile(join(directory, "outside.md"), "## [1.0.0]\nOutside");
+    await writeFile(join(directory, "workspace-other", "CHANGELOG.md"), "## [1.0.0]\nOutside");
+    await symlink(join(directory, "outside.md"), join(workspace, "linked.md"));
+    const resolver = new ReleaseNotesResolver(new FileChangelogReader(workspace));
+    for (const path of [
+      join(workspace, "CHANGELOG.md"),
+      join(directory, "outside.md"),
+      "../outside.md",
+      "../missing.md",
+      "../workspace-other/CHANGELOG.md",
+      "linked.md",
+    ]) {
+      await assert.rejects(resolver.resolve({ ...request, changelogPaths: [path, "CHANGELOG.md"] }), /within the workspace/);
+    }
+    await symlink(join(workspace, "CHANGELOG.md"), join(workspace, "internal.md"));
+    assert.deepEqual(await resolver.resolve({ ...request, changelogPaths: ["internal.md"] }), {
+      kind: "resolved", body: "Inside", source: { kind: "changelog", path: "internal.md" },
+    });
+    await mkdir(join(workspace, "docs"));
+    assert.deepEqual(await resolver.resolve({ ...request, changelogPaths: ["docs/../CHANGELOG.md"] }), {
+      kind: "resolved", body: "Inside", source: { kind: "changelog", path: "docs/../CHANGELOG.md" },
+    });
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
 });
 
 test("filesystem resolution selects the first existing candidate, not the first matching section", async () => {

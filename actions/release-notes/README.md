@@ -23,7 +23,7 @@ The action is not published yet. Replace `<commit-sha>` with the reviewed commit
 
 - `tag` (required): exact tag, including any `v` prefix or prerelease suffix. Empty or multiline tags fail.
 - `release-notes`: optional Markdown or HTML override. A nonblank override takes precedence and avoids reading changelog files.
-- `changelog-paths`: newline-separated paths, resolved relative to `GITHUB_WORKSPACE`. Defaults to `CHANGELOG.md`. The first existing file wins, even if it has no matching section. Missing files are skipped; other read errors fail the action.
+- `changelog-paths`: newline-separated paths, resolved relative to `GITHUB_WORKSPACE`. Defaults to `CHANGELOG.md`. The first existing file wins, even if it has no matching section. Missing files are skipped; other read errors fail the action. Absolute paths and paths that escape the workspace, including through symlinks, are rejected.
 
 Supports `## [1.0.0] - date`, Markdown-escaped brackets (`## \[1.0.0\] - date`), and `## 1.0.0 - date` headings. Subsections are retained, fenced-code headings are ignored, and the section ends at the next level-two heading. Leading/trailing whitespace is trimmed and changelog CRLF is normalized to LF. There is no implicit `v` prefix removal or HTML/Markdown conversion.
 
@@ -53,4 +53,4 @@ bun run check:dist
 bun audit
 ```
 
-Tests include executing the bundle under Node. CI installs Node 24 for these checks. Locally, install Node as well as Bun. Commit `dist/index.js` and `bun.lock` when changing source or dependencies.
+Tests include executing the bundle under Node. CI installs Node 24 for these checks. Locally, install Node as well as Bun. Commit `dist/index.js` and `bun.lock` when changing source or dependencies. `check:dist` first requires the bundle to be tracked, then rebuilds it and checks for a diff.

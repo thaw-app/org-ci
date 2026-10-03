@@ -18049,9 +18049,17 @@ class FileChangelogReader {
     this.workspace = workspace;
   }
   async read(paths) {
+    const root = import_node_path.resolve(this.workspace);
     for (const path of paths) {
+      if (import_node_path.isAbsolute(path))
+        throw new Error(`Changelog path must be relative and within the workspace: ${path}`);
+      const target = import_node_path.resolve(root, path);
+      this.assertContained(root, target);
       try {
-        const content = await import_promises.readFile(import_node_path.resolve(this.workspace, path), "utf8");
+        const canonicalRoot = await import_promises.realpath(root);
+        const canonicalTarget = await import_promises.realpath(target);
+        this.assertContained(canonicalRoot, canonicalTarget);
+        const content = await import_promises.readFile(canonicalTarget, "utf8");
         return { kind: "found", changelog: { path, content } };
       } catch (error) {
         if (this.isMissingFile(error))
@@ -18060,6 +18068,12 @@ class FileChangelogReader {
       }
     }
     return { kind: "missing" };
+  }
+  assertContained(root, target) {
+    const path = import_node_path.relative(root, target);
+    if (path === ".." || path.startsWith(`..${import_node_path.sep}`) || import_node_path.isAbsolute(path)) {
+      throw new Error(`Changelog path must resolve within the workspace: ${target}`);
+    }
   }
   isMissingFile(error) {
     return error instanceof Error && "code" in error && error.code === "ENOENT";
