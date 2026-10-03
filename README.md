@@ -19,6 +19,7 @@ uses: thaw-app/org-ci/actions/publish-file-to-branch@<sha>
 
 | Action | Purpose |
 |--------|---------|
+| [`actions/release-notes`](actions/release-notes/README.md) | Resolve notes from an override or tagged changelog section (TypeScript, bundled for Node 24) |
 | `actions/configure-signing` | Import Developer ID cert + notarytool profile |
 | `actions/build` | `xcodebuild archive` (Developer ID, hardened runtime) |
 | `actions/export-and-package` | Export + signed DMG |

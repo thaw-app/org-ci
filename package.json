@@ -1,0 +1,18 @@
+{
+  "name": "thaw-org-ci",
+  "private": true,
+  "packageManager": "bun@1.4.2",
+  "scripts": {
+    "typecheck": "tsc --noEmit",
+    "test": "bun run build && bun test",
+    "build": "bun build actions/release-notes/src/index.ts --target=node --format=cjs --outfile=actions/release-notes/dist/index.js",
+    "check:dist": "git ls-files --error-unmatch actions/release-notes/dist/index.js && bun run build && git diff --exit-code -- actions/release-notes/dist"
+  },
+  "dependencies": {
+    "@actions/core": "^3.0.1"
+  },
+  "devDependencies": {
+    "@types/node": "^24.0.0",
+    "typescript": "^7.0.2"
+  }
+}

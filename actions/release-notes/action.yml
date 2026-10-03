@@ -1,0 +1,24 @@
+name: Resolve Release Notes
+description: Resolve release notes from an override or a tagged changelog section.
+inputs:
+  tag:
+    description: Exact release tag to find in the changelog (for example, 3.0.0-beta.1).
+    required: true
+  release-notes:
+    description: Optional Markdown or HTML override; takes precedence over the changelog.
+    required: false
+    default: ""
+  changelog-paths:
+    description: Newline-separated candidate paths, relative to the checked-out workspace. The first existing file is used.
+    required: false
+    default: CHANGELOG.md
+outputs:
+  body:
+    description: Resolved notes, or an empty string if none were found.
+  generate:
+    description: String true when body is empty; suitable for action-gh-release generate_release_notes.
+  source:
+    description: release-notes input, the selected changelog path, or none.
+runs:
+  using: node24
+  main: dist/index.js
