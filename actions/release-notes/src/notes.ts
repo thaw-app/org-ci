@@ -13,7 +13,7 @@ export function validateTag(tag: string): void {
 export function extractSection(changelog: string, tag: string): string {
   const escaped = tag.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
   const heading = new RegExp(
-    `^##[\\t ]+(?:\\[${escaped}\\]|${escaped})(?=[\\t ]|$)[^\\r\\n]*$`,
+    String.raw`^##[\t ]+(?:\\?\[${escaped}\\?\]|${escaped})(?=[\t ]|$)[^\r\n]*$`,
   );
   const lines = changelog.replace(/^\uFEFF/, "").split(/\r?\n/);
   let start = -1;

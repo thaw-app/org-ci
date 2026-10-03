@@ -19,6 +19,12 @@ test("extracts a bracketed release, retaining subsections and stopping at next r
   assert.equal(extractSection(text, "3.0.0-beta.1"), "### Fixed\n- Bug");
 });
 
+test("extracts headings with Markdown-escaped brackets", () => {
+  for (const heading of [String.raw`## \[1.0.0\]`, String.raw`## \[1.0.0]`, String.raw`## [1.0.0\]`]) {
+    assert.equal(extractSection(`${heading} - date\nRelease notes\n## [0.9.0]\nOld`, "1.0.0"), "Release notes");
+  }
+});
+
 test("supports unbracketed headings, BOM, CRLF, and the final section", () => {
   assert.equal(extractSection("\uFEFF## 1.0.0 - date\r\n\r\nLast\r\n", "1.0.0"), "Last");
 });

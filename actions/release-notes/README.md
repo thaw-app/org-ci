@@ -25,7 +25,7 @@ The action is not published yet. Replace `<commit-sha>` with the reviewed commit
 - `release-notes`: optional Markdown or HTML override. A nonblank override takes precedence and avoids reading changelog files.
 - `changelog-paths`: newline-separated paths, resolved relative to `GITHUB_WORKSPACE`. Defaults to `CHANGELOG.md`. The first existing file wins, even if it has no matching section. Missing files are skipped; other read errors fail the action.
 
-Supports `## [1.0.0] - date` and `## 1.0.0 - date` headings. Subsections are retained, fenced-code headings are ignored, and the section ends at the next level-two heading. Leading/trailing whitespace is trimmed and changelog CRLF is normalized to LF. There is no implicit `v` prefix removal or HTML/Markdown conversion.
+Supports `## [1.0.0] - date`, Markdown-escaped brackets (`## \[1.0.0\] - date`), and `## 1.0.0 - date` headings. Subsections are retained, fenced-code headings are ignored, and the section ends at the next level-two heading. Leading/trailing whitespace is trimmed and changelog CRLF is normalized to LF. There is no implicit `v` prefix removal or HTML/Markdown conversion.
 
 ## Outputs
 

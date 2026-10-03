@@ -18062,7 +18062,7 @@ function validateTag(tag) {
 }
 function extractSection(changelog, tag) {
   const escaped = tag.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-  const heading = new RegExp(`^##[\\t ]+(?:\\[${escaped}\\]|${escaped})(?=[\\t ]|$)[^\\r\\n]*$`);
+  const heading = new RegExp(String.raw`^##[\t ]+(?:\\?\[${escaped}\\?\]|${escaped})(?=[\t ]|$)[^\r\n]*$`);
   const lines = changelog.replace(/^\uFEFF/, "").split(/\r?\n/);
   let start = -1;
   let fence;
