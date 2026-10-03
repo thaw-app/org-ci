@@ -18039,79 +18039,143 @@ function info(message) {
   process.stdout.write(message + os4.EOL);
 }
 
-// actions/release-notes/src/changelog.ts
+// actions/release-notes/src/file-changelog-reader.ts
 var import_promises = require("node:fs/promises");
 var import_node_path = require("node:path");
-async function readChangelog(workspace, paths) {
-  for (const path of paths.split(/\r?\n/).map((value) => value.trim()).filter(Boolean)) {
-    try {
-      return { path, text: await import_promises.readFile(import_node_path.resolve(workspace, path), "utf8") };
-    } catch (error) {
-      if (error.code !== "ENOENT")
-        throw error;
-    }
+
+class FileChangelogReader {
+  workspace;
+  constructor(workspace) {
+    this.workspace = workspace;
   }
-  return;
+  async read(paths) {
+    for (const path of paths) {
+      try {
+        const content = await import_promises.readFile(import_node_path.resolve(this.workspace, path), "utf8");
+        return { kind: "found", changelog: { path, content } };
+      } catch (error) {
+        if (this.isMissingFile(error))
+          continue;
+        throw error;
+      }
+    }
+    return { kind: "missing" };
+  }
+  isMissingFile(error) {
+    return error instanceof Error && "code" in error && error.code === "ENOENT";
+  }
 }
 
-// actions/release-notes/src/notes.ts
-function validateTag(tag) {
-  if (!tag.trim() || /[\r\n\0]/.test(tag)) {
-    throw new Error("tag must be a nonempty single-line value");
+// actions/release-notes/src/release-notes-resolver.ts
+class ReleaseNotesResolver {
+  changelogReader;
+  constructor(changelogReader) {
+    this.changelogReader = changelogReader;
   }
-}
-function extractSection(changelog, tag) {
-  const escaped = tag.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-  const heading = new RegExp(String.raw`^##[\t ]+(?:\\?\[${escaped}\\?\]|${escaped})(?=[\t ]|$)[^\r\n]*$`);
-  const lines = changelog.replace(/^\uFEFF/, "").split(/\r?\n/);
-  let start = -1;
-  let fence;
-  for (let i = 0;i < lines.length; i++) {
-    const line = lines[i];
-    const marker = /^ {0,3}(`{3,}|~{3,})/.exec(line)?.[1];
-    if (marker) {
-      if (!fence)
-        fence = marker;
-      else if (marker[0] === fence[0] && marker.length >= fence.length && /^ {0,3}(`+|~+)\s*$/.test(line))
-        fence = undefined;
-      continue;
+  async resolve(request) {
+    this.validateTag(request.tag);
+    const override = request.override.trim();
+    if (override.length > 0) {
+      return { kind: "resolved", body: override, source: { kind: "override" } };
     }
-    if (fence)
-      continue;
-    if (start < 0 && heading.test(line))
-      start = i + 1;
-    else if (start >= 0 && /^##(?:[\t ]|$)/.test(line)) {
-      return lines.slice(start, i).join(`
-`).trim();
+    const readResult = await this.changelogReader.read(request.changelogPaths);
+    if (readResult.kind === "missing") {
+      return { kind: "missing", reason: "changelog-not-found" };
+    }
+    const { path, content } = readResult.changelog;
+    const section = this.extractSection(content, request.tag);
+    if (section.kind === "missing") {
+      return { kind: "missing", reason: "section-not-found", path };
+    }
+    if (section.body.length === 0) {
+      return { kind: "missing", reason: "section-empty", path };
+    }
+    return { kind: "resolved", body: section.body, source: { kind: "changelog", path } };
+  }
+  validateTag(tag) {
+    if (tag.trim().length === 0 || /[\r\n\0]/.test(tag)) {
+      throw new Error("tag must be a nonempty single-line value");
     }
   }
-  return start < 0 ? "" : lines.slice(start).join(`
-`).trim();
-}
-function resolveNotes(tag, override, changelog) {
-  validateTag(tag);
-  const body = override.trim() || (changelog ? extractSection(changelog.text, tag) : "");
-  return {
-    body,
-    generate: !body,
-    source: override.trim() ? "release-notes input" : changelog ? changelog.path : "none"
-  };
+  extractSection(content, tag) {
+    const lines = content.replace(/^\uFEFF/, "").split(/\r?\n/);
+    const sectionLines = [];
+    let collecting = false;
+    let fence = null;
+    for (const line of lines) {
+      const marker = /^ {0,3}(`{3,}|~{3,})/.exec(line);
+      if (marker !== null) {
+        const opening = marker[0].trimStart();
+        if (fence === null) {
+          fence = opening;
+        } else if (opening.startsWith(fence.charAt(0)) && opening.length >= fence.length && /^ {0,3}(`+|~+)\s*$/.test(line)) {
+          fence = null;
+        }
+        if (collecting)
+          sectionLines.push(line);
+        continue;
+      }
+      if (fence !== null) {
+        if (collecting)
+          sectionLines.push(line);
+        continue;
+      }
+      if (collecting && /^##(?:[\t ]|$)/.test(line))
+        break;
+      if (collecting) {
+        sectionLines.push(line);
+      } else if (this.isReleaseHeading(line, tag)) {
+        collecting = true;
+      }
+    }
+    if (!collecting)
+      return { kind: "missing" };
+    return { kind: "found", body: sectionLines.join(`
+`).trim() };
+  }
+  isReleaseHeading(line, tag) {
+    const prefix = /^##[\t ]+/.exec(line);
+    if (prefix === null)
+      return false;
+    const heading = line.slice(prefix[0].length);
+    const candidates = [tag, `[${tag}]`, `\\[${tag}]`, `[${tag}\\]`, `\\[${tag}\\]`];
+    return candidates.some((candidate) => {
+      if (!heading.startsWith(candidate))
+        return false;
+      const suffix = heading.slice(candidate.length);
+      return suffix.length === 0 || /^[\t ]/.test(suffix);
+    });
+  }
 }
 
 // actions/release-notes/src/index.ts
+function readRequest() {
+  return {
+    tag: getInput("tag", { required: true }),
+    override: getInput("release-notes", { trimWhitespace: false }),
+    changelogPaths: getInput("changelog-paths").split(/\r?\n/).map((path) => path.trim()).filter((path) => path.length > 0)
+  };
+}
+function publishResult(result) {
+  if (result.kind === "resolved") {
+    const source = result.source.kind === "override" ? "release-notes input" : result.source.path;
+    setOutput("body", result.body);
+    setOutput("generate", "false");
+    setOutput("source", source);
+    info(`Release notes source: ${source}`);
+    return;
+  }
+  const source = result.reason === "changelog-not-found" ? "none" : result.path;
+  setOutput("body", "");
+  setOutput("generate", "true");
+  setOutput("source", source);
+  info(`No release notes: ${result.reason}. GitHub-generated notes can be enabled by the caller.`);
+}
 async function run() {
   try {
-    const tag = getInput("tag", { required: true });
-    validateTag(tag);
-    const override = getInput("release-notes", { trimWhitespace: false });
-    const changelog = override.trim() ? undefined : await readChangelog(process.env.GITHUB_WORKSPACE ?? process.cwd(), getInput("changelog-paths"));
-    const notes = resolveNotes(tag, override, changelog);
-    setOutput("body", notes.body);
-    setOutput("generate", String(notes.generate));
-    setOutput("source", notes.source);
-    info(`Release notes source: ${notes.source}`);
-    if (notes.generate)
-      info(`No release notes found for ${tag}; GitHub-generated notes can be enabled by the caller.`);
+    const reader = new FileChangelogReader(process.env.GITHUB_WORKSPACE ?? process.cwd());
+    const resolver = new ReleaseNotesResolver(reader);
+    publishResult(await resolver.resolve(readRequest()));
   } catch (error) {
     setFailed(error instanceof Error ? error.message : String(error));
   }

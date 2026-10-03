@@ -35,6 +35,12 @@ Supports `## [1.0.0] - date`, Markdown-escaped brackets (`## \[1.0.0\] - date`),
 
 For Thaw's current behavior, keep `generate_release_notes: false`. For Floe's current fallback, use the `generate` output. Sparkle consumers can pass `body` directly.
 
+## Implementation
+
+`ReleaseNotesResolver.resolve(request)` owns validation, override precedence, candidate selection, and section extraction. Its result distinguishes resolved notes from a missing changelog, missing section, or empty section. Only the GitHub adapter translates those outcomes into `body`, `generate`, and `source` outputs.
+
+The resolver accepts a `ChangelogReader`; `FileChangelogReader` implements filesystem access. Tests exercise the resolver using both a fixture reader and temporary files. Filesystem failures other than missing files propagate to the adapter and fail the action.
+
 ## Development
 
 Bun 1.4.2 manages dependencies, runs tests, and bundles the action. Consumers execute the committed CommonJS bundle under GitHub's Node 24 runtime; they do not need Bun.

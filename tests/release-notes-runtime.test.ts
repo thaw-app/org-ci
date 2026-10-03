@@ -25,6 +25,30 @@ test("bundled action runs in Node and writes multiline GitHub outputs", () => {
   }
 });
 
+for (const scenario of [
+  { name: "missing changelog", files: [], source: "none" },
+  { name: "missing section", files: [{ name: "CHANGELOG.md", content: "## [2.0.0]\nOther" }], source: "CHANGELOG.md" },
+  { name: "empty section", files: [{ name: "CHANGELOG.md", content: "## [1.0.0]\n\n" }], source: "CHANGELOG.md" },
+]) {
+  test(`bundled action preserves fallback outputs for ${scenario.name}`, () => {
+    const workspace = mkdtempSync(join(tmpdir(), "release-notes-runtime-"));
+    try {
+      const output = join(workspace, "outputs");
+      writeFileSync(output, "");
+      for (const file of scenario.files) writeFileSync(join(workspace, file.name), file.content);
+      execFileSync("node", [bundle], {
+        env: { ...process.env, GITHUB_WORKSPACE: workspace, GITHUB_OUTPUT: output, INPUT_TAG: "1.0.0", "INPUT_RELEASE-NOTES": "", "INPUT_CHANGELOG-PATHS": "CHANGELOG.md" },
+      });
+      const outputs = readFileSync(output, "utf8");
+      assert.match(outputs, /body<<[^\n]+\n\n/);
+      assert.match(outputs, /generate<<[^\n]+\ntrue\n/);
+      assert.ok(outputs.includes(`\n${scenario.source}\n`));
+    } finally {
+      rmSync(workspace, { recursive: true, force: true });
+    }
+  });
+}
+
 test("bundled action fails in Node for an invalid tag", () => {
   const result = spawnSync("node", [bundle], {
     encoding: "utf8",
