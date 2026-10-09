@@ -31,6 +31,13 @@ inputs:
     description: Pass ENABLE_HARDENED_RUNTIME=YES (required for notarization unless the project already sets it)
     required: false
     default: "true"
+  build-settings:
+    description: >-
+      Extra build settings, one NAME=value per line. They apply to every target,
+      so prefer names only the app target reads (for example a setting that
+      project.yml maps to CODE_SIGN_ENTITLEMENTS).
+    required: false
+    default: ""
 
 runs:
   using: composite
@@ -48,6 +55,7 @@ runs:
         CONFIGURATION: ${{ inputs.configuration }}
         ARCHIVE_PATH: ${{ inputs.archive-path }}
         ENABLE_HARDENED_RUNTIME: ${{ inputs.enable-hardened-runtime }}
+        BUILD_SETTINGS: ${{ inputs.build-settings }}
       run: |
         set -euo pipefail
 
@@ -82,5 +90,15 @@ runs:
         if [[ "$ENABLE_HARDENED_RUNTIME" == "true" ]]; then
           args+=(ENABLE_HARDENED_RUNTIME=YES)
         fi
+
+        # Only NAME=value reaches xcodebuild, so a line cannot become an option.
+        while IFS= read -r setting; do
+          [[ -z "${setting//[[:space:]]/}" ]] && continue
+          if [[ ! "$setting" =~ ^[A-Z_][A-Z0-9_]*=.*$ ]]; then
+            echo "::error::build-settings takes NAME=value lines, got: $setting"
+            exit 1
+          fi
+          args+=("$setting")
+        done <<<"$BUILD_SETTINGS"
 
         xcodebuild "${args[@]}"

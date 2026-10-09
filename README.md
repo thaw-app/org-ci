@@ -20,7 +20,7 @@ uses: thaw-app/org-ci/actions/publish-file-to-branch@<sha>
 | Action | Purpose |
 |--------|---------|
 | [`actions/release-notes`](actions/release-notes/README.md) | Resolve notes from an override or tagged changelog section (TypeScript, bundled for Node 24) |
-| `actions/configure-signing` | Import Developer ID cert + notarytool profile |
+| `actions/configure-signing` | Import Developer ID cert + notarytool profile, and an optional provisioning profile |
 | `actions/build` | `xcodebuild archive` (Developer ID, hardened runtime) |
 | `actions/export-and-package` | Export + signed DMG |
 | `actions/notarize-and-validate` | notarytool + staple + Gatekeeper |
@@ -114,6 +114,14 @@ default 5).
 
 - Pass exactly one of `project-name` or `workspace-name`
 - `enable-hardened-runtime` defaults to `true` (needed for notarization unless the Xcode project already sets it)
+
+### Tests
+
+Run `bun install --frozen-lockfile`, then `bun run typecheck`, `bun run test`, and `bun run check:dist`.
+
+On macOS, `python3 -m unittest discover -s tests -p '*_test.py' -v` tests the signing action scripts.
+These tests use scratch directories and mock the archive and CMS boundaries; they need no signing credentials
+and never import a certificate, build an app, or contact the notary service. CI runs them on a macOS runner.
 
 ## Notes
 

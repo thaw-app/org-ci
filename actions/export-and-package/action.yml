@@ -70,6 +70,17 @@ inputs:
       first launch without network access.
     required: false
     default: "true"
+  provisioning-profile-name:
+    description: >-
+      Name of the Developer ID provisioning profile the app was archived with
+      (configure-signing's provisioning-profile-name output). Needs
+      bundle-identifier.
+    required: false
+    default: ""
+  bundle-identifier:
+    description: Bundle identifier of the app, to pair with provisioning-profile-name
+    required: false
+    default: ""
 
 runs:
   using: composite
@@ -113,18 +124,13 @@ runs:
         KEYCHAIN_PATH_INPUT: ${{ inputs.keychain-path }}
         NOTARIZE_TIMEOUT: ${{ inputs.notarize-timeout }}
         NOTARIZE_APP: ${{ inputs.notarize-app }}
+        PROFILE_NAME: ${{ inputs.provisioning-profile-name }}
+        BUNDLE_IDENTIFIER: ${{ inputs.bundle-identifier }}
       run: |
         set -euo pipefail
 
         export_plist="$RUNNER_TEMP/ExportOptions.plist"
-        rm -f "$export_plist"
-        /usr/libexec/PlistBuddy -c "Clear dict" "$export_plist"
-        /usr/libexec/PlistBuddy \
-          -c "Add :method string developer-id" \
-          -c "Add :teamID string $APPLE_TEAM_ID" \
-          -c "Add :signingStyle string manual" \
-          -c "Add :destination string export" \
-          "$export_plist"
+        python3 "$GITHUB_ACTION_PATH/write-export-options.py" > "$export_plist"
 
         xcodebuild -exportArchive \
           -archivePath "$ARCHIVE_PATH" \
