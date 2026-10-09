@@ -70,6 +70,17 @@ inputs:
       first launch without network access.
     required: false
     default: "true"
+  provisioning-profile-name:
+    description: >-
+      Name of the Developer ID provisioning profile the app was archived with
+      (configure-signing's provisioning-profile-name output). Needs
+      bundle-identifier.
+    required: false
+    default: ""
+  bundle-identifier:
+    description: Bundle identifier of the app, to pair with provisioning-profile-name
+    required: false
+    default: ""
 
 runs:
   using: composite
@@ -113,6 +124,8 @@ runs:
         KEYCHAIN_PATH_INPUT: ${{ inputs.keychain-path }}
         NOTARIZE_TIMEOUT: ${{ inputs.notarize-timeout }}
         NOTARIZE_APP: ${{ inputs.notarize-app }}
+        PROFILE_NAME: ${{ inputs.provisioning-profile-name }}
+        BUNDLE_IDENTIFIER: ${{ inputs.bundle-identifier }}
       run: |
         set -euo pipefail
 
@@ -125,6 +138,18 @@ runs:
           -c "Add :signingStyle string manual" \
           -c "Add :destination string export" \
           "$export_plist"
+
+        # A manual export must be told which profile each bundle uses.
+        if [[ -n "$PROFILE_NAME" ]]; then
+          if [[ ! "$BUNDLE_IDENTIFIER" =~ ^[A-Za-z0-9.-]+$ ]]; then
+            echo "::error::provisioning-profile-name needs a bundle-identifier."
+            exit 1
+          fi
+          /usr/libexec/PlistBuddy \
+            -c "Add :provisioningProfiles dict" \
+            -c "Add :provisioningProfiles:$BUNDLE_IDENTIFIER string $PROFILE_NAME" \
+            "$export_plist"
+        fi
 
         xcodebuild -exportArchive \
           -archivePath "$ARCHIVE_PATH" \

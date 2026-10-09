@@ -21,6 +21,21 @@ inputs:
     description: Path for the temporary build keychain (must match notarize-and-validate)
     required: false
     default: ""
+  provisioning-profile:
+    description: >-
+      Base64-encoded Developer ID provisioning profile (.provisionprofile). Only
+      for apps with entitlements that need one, such as iCloud. Leave empty
+      otherwise.
+    required: false
+    default: ""
+
+outputs:
+  provisioning-profile-name:
+    description: Name of the installed provisioning profile, empty when none was passed
+    value: ${{ steps.profile.outputs.name }}
+  provisioning-profile-uuid:
+    description: UUID of the installed provisioning profile, empty when none was passed
+    value: ${{ steps.profile.outputs.uuid }}
 
 runs:
   using: composite
@@ -66,3 +81,40 @@ runs:
           --password "$APPLE_ID_PASSWORD" \
           --team-id "$APPLE_TEAM_ID" \
           --keychain "$keychain"
+
+    # A restricted entitlement is only honored when a profile that grants it is
+    # embedded. Xcode finds profiles by UUID in its own folder.
+    - name: Install provisioning profile
+      id: profile
+      if: inputs.provisioning-profile != ''
+      shell: bash
+      env:
+        PROVISIONING_PROFILE: ${{ inputs.provisioning-profile }}
+        APPLE_TEAM_ID: ${{ inputs.apple-team-id }}
+      run: |
+        set -euo pipefail
+        profile="$RUNNER_TEMP/profile.provisionprofile"
+        decoded="$RUNNER_TEMP/profile.plist"
+        trap 'rm -f "$profile" "$decoded"' EXIT
+        base64 -D <<<"$PROVISIONING_PROFILE" > "$profile"
+        security cms -D -i "$profile" > "$decoded"
+        uuid="$(/usr/libexec/PlistBuddy -c "Print :UUID" "$decoded")"
+        name="$(/usr/libexec/PlistBuddy -c "Print :Name" "$decoded")"
+        team="$(/usr/libexec/PlistBuddy -c "Print :TeamIdentifier:0" "$decoded")"
+        if [[ ! "$uuid" =~ ^[0-9A-Fa-f-]{36}$ ]]; then
+          echo "::error::The provisioning profile has no usable UUID."
+          exit 1
+        fi
+        if [[ "$team" != "$APPLE_TEAM_ID" ]]; then
+          echo "::error::The provisioning profile belongs to another team than apple-team-id."
+          exit 1
+        fi
+        # Xcode 16 and later read the first folder, earlier ones the second.
+        for folder in "$HOME/Library/Developer/Xcode/UserData/Provisioning Profiles" "$HOME/Library/MobileDevice/Provisioning Profiles"; do
+          mkdir -p "$folder"
+          cp "$profile" "$folder/$uuid.provisionprofile"
+        done
+        {
+          echo "name=$name"
+          echo "uuid=$uuid"
+        } >> "$GITHUB_OUTPUT"
