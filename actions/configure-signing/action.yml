@@ -99,8 +99,15 @@ runs:
         base64 -D <<<"$PROVISIONING_PROFILE" > "$profile"
         security cms -D -i "$profile" > "$decoded"
         uuid="$(/usr/libexec/PlistBuddy -c "Print :UUID" "$decoded")"
-        name="$(/usr/libexec/PlistBuddy -c "Print :Name" "$decoded")"
+        # Preserve trailing newlines until validation; command substitution normally strips them.
+        name="$(/usr/libexec/PlistBuddy -c "Print :Name" "$decoded" && printf '.')"
+        name="${name%.}"
+        name="${name%$'\n'}"
         team="$(/usr/libexec/PlistBuddy -c "Print :TeamIdentifier:0" "$decoded")"
+        if [[ -z "$name" || "$name" == *$'\n'* || "$name" == *$'\r'* ]]; then
+          echo "::error::The provisioning profile needs a nonempty, single-line name."
+          exit 1
+        fi
         if [[ ! "$uuid" =~ ^[0-9A-Fa-f-]{36}$ ]]; then
           echo "::error::The provisioning profile has no usable UUID."
           exit 1

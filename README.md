@@ -115,6 +115,14 @@ default 5).
 - Pass exactly one of `project-name` or `workspace-name`
 - `enable-hardened-runtime` defaults to `true` (needed for notarization unless the Xcode project already sets it)
 
+### Tests
+
+Run `bun install --frozen-lockfile`, then `bun run typecheck`, `bun run test`, and `bun run check:dist`.
+
+On macOS, `python3 -m unittest discover -s tests -p '*_test.py' -v` tests the signing action scripts.
+These tests use scratch directories and mock the archive and CMS boundaries; they need no signing credentials
+and never import a certificate, build an app, or contact the notary service. CI runs them on a macOS runner.
+
 ## Notes
 
 - Actions are product-agnostic: pass `app-name`, scheme, `asset-prefix`, etc. from the caller.
