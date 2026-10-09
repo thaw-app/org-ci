@@ -130,7 +130,7 @@ runs:
         set -euo pipefail
 
         export_plist="$RUNNER_TEMP/ExportOptions.plist"
-        python3 "$GITHUB_ACTION_PATH/write-export-options.py" "$export_plist"
+        python3 "$GITHUB_ACTION_PATH/write-export-options.py" > "$export_plist"
 
         xcodebuild -exportArchive \
           -archivePath "$ARCHIVE_PATH" \

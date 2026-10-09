@@ -66,6 +66,18 @@ exit 0
 }'''
         return self.run_step("export-and-package", "Export archive and create signed DMG", stub, **inputs)
 
+    def test_export_serializer_uses_stdout_without_creating_files(self):
+        result = subprocess.run(
+            ["python3", str(ROOT / "actions/export-and-package/write-export-options.py")],
+            env=self.env, cwd=self.folder, capture_output=True, timeout=10,
+        )
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(plistlib.loads(result.stdout), {
+            "method": "developer-id", "teamID": "TESTTEAM01",
+            "signingStyle": "manual", "destination": "export",
+        })
+        self.assertEqual(list(self.folder.iterdir()), [])
+
     def test_export_without_profile_preserves_existing_options(self):
         result = self.export()
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)

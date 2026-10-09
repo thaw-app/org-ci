@@ -18,5 +18,4 @@ if profile_name:
     # Profile names are data, not commands: preserve quotes, backslashes and XML characters.
     options["provisioningProfiles"] = {bundle_identifier: profile_name}
 
-with open(sys.argv[1], "wb") as destination:
-    plistlib.dump(options, destination)
+plistlib.dump(options, sys.stdout.buffer)
