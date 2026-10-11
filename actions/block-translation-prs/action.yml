@@ -1,0 +1,79 @@
+name: Block Translation PRs
+description: >-
+  Close a pull request that only changes String Catalogs and point its author to
+  Crowdin. Call it from a pull_request workflow limited to **/*.xcstrings.
+
+inputs:
+  product:
+    description: Name of the app, as the comment should say it
+    required: true
+  crowdin-url:
+    description: Address of the app's Crowdin project
+    required: true
+  translation-sync-branch:
+    description: >-
+      Branch Crowdin's own pull requests come from. One opened from it in this
+      repo by a maintainer is left alone. When empty, any pull request with
+      "crowdin" in its title is left alone, which its author can arrange.
+    required: false
+    default: ""
+
+runs:
+  using: composite
+  steps:
+    - name: Close the pull request and comment
+      uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
+      env:
+        PRODUCT: ${{ inputs.product }}
+        CROWDIN_URL: ${{ inputs.crowdin-url }}
+        SYNC_BRANCH: ${{ inputs.translation-sync-branch }}
+      with:
+        script: |
+          const pr = context.payload.pull_request;
+          if (!pr) return;
+
+          // Crowdin's own pull requests are how translations arrive. A maintainer
+          // opens them from the sync branch in this repo.
+          const { PRODUCT, CROWDIN_URL, SYNC_BRANCH } = process.env;
+          const isSync = SYNC_BRANCH
+            ? pr.head?.ref === SYNC_BRANCH &&
+              pr.head?.repo?.full_name === `${context.repo.owner}/${context.repo.repo}` &&
+              ['OWNER', 'MEMBER', 'COLLABORATOR'].includes(pr.author_association || '')
+            : (pr.title || '').toLowerCase().includes('crowdin');
+          if (isSync) return;
+
+          const files = await github.paginate(github.rest.pulls.listFiles, {
+            owner: context.repo.owner,
+            repo: context.repo.repo,
+            pull_number: pr.number,
+          });
+
+          const onlyTranslations =
+            files.length > 0 && files.every(f => f.filename.endsWith('.xcstrings'));
+          if (!onlyTranslations) return;
+
+          const message = [
+            '### Manual translation detected',
+            '',
+            `Thank you very much for your contribution. ${PRODUCT} is translated on Crowdin: ${CROWDIN_URL}`,
+            '',
+            'Please contribute your translations there. A translation edited here conflicts with the ones that arrive from Crowdin and can overwrite other languages.',
+            '',
+            'Thank you for your understanding.',
+            '',
+            'This PR is being automatically closed to keep the localization sync intact.',
+          ].join('\n');
+
+          await github.rest.issues.createComment({
+            owner: context.repo.owner,
+            repo: context.repo.repo,
+            issue_number: pr.number,
+            body: message,
+          });
+
+          await github.rest.pulls.update({
+            owner: context.repo.owner,
+            repo: context.repo.repo,
+            pull_number: pr.number,
+            state: 'closed',
+          });

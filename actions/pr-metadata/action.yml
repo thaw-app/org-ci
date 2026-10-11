@@ -1,0 +1,62 @@
+name: PR Metadata
+description: >-
+  Label a pull request from its template checkboxes and changed paths, check its
+  title and body, and post one summary comment. Call it from a
+  pull_request_target workflow. It never checks out the pull request's code.
+
+inputs:
+  area-rules:
+    description: >-
+      JSON array mapping changed paths to area labels. Each rule is
+      {"label", "prefixes"?, "paths"?, "patterns"?, "kind"?}; the first rule that
+      matches a path wins. patterns are case-insensitive regular expressions.
+      kind is "product" (the default), "fallback" (dropped when a product area
+      also matched) or "ops".
+    required: true
+  comment-marker:
+    description: HTML comment the summary comment starts with, so later runs update it
+    required: true
+  title-example-scope:
+    description: Scope shown in the example when a title is not a conventional commit
+    required: false
+    default: settings
+  translation-sync-branch:
+    description: Branch whose pull requests are skipped when a maintainer opens them from this repo. When empty, none are skipped.
+    required: false
+    default: ""
+  maintainer-only-base:
+    description: Base branch only maintainers may target. When empty, anyone may target any branch.
+    required: false
+    default: ""
+  contributor-base:
+    description: Branch the failure message tells outside contributors to target
+    required: false
+    default: ""
+  require-closes:
+    description: Fail when the body has no "Closes:" line
+    required: false
+    default: "false"
+  require-signoff:
+    description: Fail when a commit has no Signed-off-by trailer matching its author email
+    required: false
+    default: "false"
+
+runs:
+  using: composite
+  steps:
+    - name: Label and check the pull request
+      uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
+      env:
+        ACTION_PATH: ${{ github.action_path }}
+        AREA_RULES: ${{ inputs.area-rules }}
+        COMMENT_MARKER: ${{ inputs.comment-marker }}
+        TITLE_EXAMPLE_SCOPE: ${{ inputs.title-example-scope }}
+        TRANSLATION_SYNC_BRANCH: ${{ inputs.translation-sync-branch }}
+        MAINTAINER_ONLY_BASE: ${{ inputs.maintainer-only-base }}
+        CONTRIBUTOR_BASE: ${{ inputs.contributor-base }}
+        REQUIRE_CLOSES: ${{ inputs.require-closes }}
+        REQUIRE_SIGNOFF: ${{ inputs.require-signoff }}
+      with:
+        script: |
+          const run = require(`${process.env.ACTION_PATH}/run.cjs`);
+          await run({ github, context, core });
