@@ -75,6 +75,23 @@ class DetectCodeChangesTest(unittest.TestCase):
         self.assertEqual(self.detect(BEFORE="0" * 40), "code=true\n")
         self.assertEqual(self.detect(BEFORE=""), "code=true\n")
 
+    def test_a_range_that_cannot_be_compared_counts_as_code(self):
+        self.commit("docs/guide.md")
+        self.assertEqual(self.detect(BEFORE="1" * 40), "code=true\n")
+
+    def test_a_code_file_renamed_out_of_the_pattern_counts_as_code(self):
+        self.commit("Sources/App.swift")
+        self.before = git(self.repo, "rev-parse", "HEAD")
+        git(self.repo, "mv", "Sources/App.swift", "docs/App.md")
+        git(self.repo, "commit", "-q", "-m", "move")
+        self.assertEqual(self.detect(), "code=true\n")
+
+    def test_a_push_that_removes_a_code_commit_counts_as_code(self):
+        self.before = self.commit("Sources/App.swift")
+        git(self.repo, "reset", "-q", "--hard", "HEAD~1")
+        self.commit("docs/guide.md")
+        self.assertEqual(self.detect(), "code=true\n")
+
     def test_a_manual_run_counts_as_code(self):
         self.assertEqual(self.detect(EVENT_NAME="workflow_dispatch"), "code=true\n")
 

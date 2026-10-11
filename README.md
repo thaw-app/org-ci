@@ -185,12 +185,16 @@ scan, since that would publish 0% coverage.
 sonarqube:
   needs: [changes, build]
   runs-on: ubuntu-latest
+  env:
+    SONAR_ENABLED: ${{ github.actor != 'dependabot[bot]' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) }}
   steps:
     - uses: actions/checkout@<sha>
+      if: env.SONAR_ENABLED == 'true'
       with:
         fetch-depth: 0
         persist-credentials: false
     - uses: thaw-app/org-ci/actions/sonar-scan@<sha>
+      if: env.SONAR_ENABLED == 'true'
       with:
         sonar-token: ${{ secrets.SONAR_TOKEN }}
         code-changed: ${{ needs.changes.outputs.code }}
@@ -200,7 +204,9 @@ sonarqube:
 ```
 
 Forks and Dependabot get no `SONAR_TOKEN` on a pull request, so the caller skips
-the action for them. Keep the report paths out of `sonar-project.properties`: a
+the action for them, as `SONAR_ENABLED` does above. The `build` job has to run
+on a docs-only change and skip its own steps: GitHub skips a job whose `needs`
+were skipped, and the scan would never restore the cached coverage. Keep the report paths out of `sonar-project.properties`: a
 report exists only when this run built or restored it.
 
 ### Checking out a release
