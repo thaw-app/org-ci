@@ -1,0 +1,34 @@
+name: Detect Code Changes
+description: >-
+  Report whether a pull request or a push touched code, so a workflow can skip
+  its heavy jobs for a docs-only change. Run it after a checkout with
+  fetch-depth 0.
+
+inputs:
+  patterns:
+    description: >-
+      Extended regular expression. A changed path that matches it counts as
+      code.
+    required: true
+
+outputs:
+  code:
+    description: >-
+      "true" when a changed path matched, or when the event gives no range to
+      compare (a manual run, or a push with no previous commit). "false"
+      otherwise.
+    value: ${{ steps.filter.outputs.code }}
+
+runs:
+  using: composite
+  steps:
+    - name: Detect code-related paths
+      id: filter
+      shell: bash
+      env:
+        EVENT_NAME: ${{ github.event_name }}
+        BASE_REF: ${{ github.base_ref }}
+        BEFORE: ${{ github.event.before }}
+        SHA: ${{ github.sha }}
+        PATTERNS: ${{ inputs.patterns }}
+      run: bash "$GITHUB_ACTION_PATH/detect.sh"

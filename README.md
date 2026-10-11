@@ -150,6 +150,59 @@ The first rule that matches a path gives it its area. A `fallback` area is
 dropped when a product area also matched. The area checkboxes in the pull
 request template must use the same labels as the rules.
 
+### CI steps
+
+`detect-code-changes` and `sonar-scan` are the two parts of an app's CI workflow
+that do not depend on how the app builds.
+
+`detect-code-changes` reports `code` as `"true"` when a pull request or a push
+changed a path matching `patterns`, so the build can be skipped for a docs-only
+change. A manual run, or a push with no previous commit, counts as code.
+
+```yaml
+changes:
+  runs-on: ubuntu-latest
+  outputs:
+    code: ${{ steps.filter.outputs.code }}
+  steps:
+    - uses: actions/checkout@<sha>
+      with:
+        fetch-depth: 0
+        persist-credentials: false
+    - uses: thaw-app/org-ci/actions/detect-code-changes@<sha>
+      id: filter
+      with:
+        patterns: '(\.swift$|^MyApp\.xcodeproj/|^scripts/)'
+```
+
+`sonar-scan` runs the scan with coverage. When the run built the code, it
+downloads the build job's coverage artifact and caches it. When the run skipped
+the build, it restores the last cached coverage for the branch, then for the
+base or default branch. A run with no build and no cached coverage does not
+scan, since that would publish 0% coverage.
+
+```yaml
+sonarqube:
+  needs: [changes, build]
+  runs-on: ubuntu-latest
+  steps:
+    - uses: actions/checkout@<sha>
+      with:
+        fetch-depth: 0
+        persist-credentials: false
+    - uses: thaw-app/org-ci/actions/sonar-scan@<sha>
+      with:
+        sonar-token: ${{ secrets.SONAR_TOKEN }}
+        code-changed: ${{ needs.changes.outputs.code }}
+        cache-path: coverage.xml
+        reports: |
+          sonar.coverageReportPaths=coverage.xml
+```
+
+Forks and Dependabot get no `SONAR_TOKEN` on a pull request, so the caller skips
+the action for them. Keep the report paths out of `sonar-project.properties`: a
+report exists only when this run built or restored it.
+
 ### Checking out a release
 
 `checkout-source` checks the caller out at a ref, then reports the commit, the
