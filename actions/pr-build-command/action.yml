@@ -1,0 +1,80 @@
+name: PR Build Command
+description: >-
+  Run a build workflow on a pull request's branch when someone with write access
+  comments a command on it. Call it from an issue_comment workflow.
+
+inputs:
+  command:
+    description: The comment that starts a build
+    required: false
+    default: .build
+  workflow:
+    description: File name of the workflow to run on the pull request's branch
+    required: false
+    default: build-dmg.yml
+
+runs:
+  using: composite
+  steps:
+    - name: Parse command
+      id: command
+      uses: github/command@3442f3fa1efe01bdb024b157083c337902d17372 # v2.0.3
+      with:
+        github_token: ${{ github.token }}
+        command: ${{ inputs.command }}
+        permissions: write
+
+    # A branch name is chosen by whoever opened the pull request, so it reaches
+    # the shell through the environment and is never written into a script.
+    - name: Read the pull request
+      if: steps.command.outputs.continue == 'true'
+      id: pr
+      shell: bash
+      env:
+        GH_TOKEN: ${{ github.token }}
+        PR_URL: ${{ github.event.issue.pull_request.url }}
+        REPOSITORY: ${{ github.repository }}
+      run: |
+        set -euo pipefail
+        branch=$(gh api "$PR_URL" --jq '.head.ref')
+        head_repo=$(gh api "$PR_URL" --jq '.head.repo.full_name')
+        same_repo=false
+        if [[ "$head_repo" == "$REPOSITORY" ]]; then
+          same_repo=true
+        fi
+        {
+          echo "branch=$branch"
+          echo "same_repo=$same_repo"
+        } >> "$GITHUB_OUTPUT"
+        echo "Detected branch: $branch"
+        echo "PR head repository: $head_repo"
+
+    - name: Run the build workflow
+      if: steps.command.outputs.continue == 'true' && steps.pr.outputs.same_repo == 'true'
+      shell: bash
+      env:
+        GH_TOKEN: ${{ github.token }}
+        BRANCH: ${{ steps.pr.outputs.branch }}
+        WORKFLOW: ${{ inputs.workflow }}
+        REPOSITORY: ${{ github.repository }}
+        PR_NUMBER: ${{ github.event.issue.number }}
+      run: |
+        set -euo pipefail
+        gh workflow run "$WORKFLOW" --ref "$BRANCH" -R "$REPOSITORY"
+        gh pr comment "$PR_NUMBER" -R "$REPOSITORY" \
+          --body "Build triggered for branch \`$BRANCH\`. Check the Actions tab for progress."
+
+    # A workflow run on a fork's branch would build code nobody here has read.
+    - name: Explain why a fork is not built
+      if: steps.command.outputs.continue == 'true' && steps.pr.outputs.same_repo == 'false'
+      shell: bash
+      env:
+        GH_TOKEN: ${{ github.token }}
+        BRANCH: ${{ steps.pr.outputs.branch }}
+        WORKFLOW: ${{ inputs.workflow }}
+        REPOSITORY: ${{ github.repository }}
+        PR_NUMBER: ${{ github.event.issue.number }}
+      run: |
+        set -euo pipefail
+        gh pr comment "$PR_NUMBER" -R "$REPOSITORY" \
+          --body "Build was not triggered automatically because this pull request comes from a fork. A maintainer can trigger it manually by running the \`${WORKFLOW%.*}\` workflow against branch \`$BRANCH\`."

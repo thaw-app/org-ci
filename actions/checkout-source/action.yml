@@ -1,0 +1,111 @@
+name: Checkout Source
+description: >-
+  Check out the caller repository at a ref and report the app's release build
+  settings. Keeps the caller's local actions in place across the checkout.
+
+inputs:
+  project-name:
+    description: Xcode project to build, relative to the checkout (for example MyApp.xcodeproj)
+    required: true
+  target-name:
+    description: App target whose Release deployment target is reported
+    required: true
+  ref:
+    description: Branch, tag, or commit to check out (empty = triggering commit)
+    required: false
+    default: ""
+  fetch-depth:
+    description: Passed to actions/checkout
+    required: false
+    default: "1"
+  path:
+    description: Checkout directory relative to GITHUB_WORKSPACE
+    required: false
+    default: "."
+  local-actions-path:
+    description: >-
+      Directory of the caller's local actions, relative to GITHUB_WORKSPACE. It is
+      put back after the checkout. When empty, nothing is kept.
+    required: false
+    default: .github/actions
+
+outputs:
+  repository:
+    description: owner/name that was checked out
+    value: ${{ github.repository }}
+  commit:
+    description: Full commit SHA that was checked out
+    value: ${{ steps.meta.outputs.commit }}
+  project-name:
+    description: Xcode project to build, with the checkout path in front when there is one
+    value: ${{ steps.meta.outputs.project_name }}
+  deployment-target:
+    description: MACOSX_DEPLOYMENT_TARGET from the app's Release configuration
+    value: ${{ steps.meta.outputs.deployment_target }}
+
+runs:
+  using: composite
+  steps:
+    # A release tag can predate the workflow's local actions, and the checkout
+    # replaces the working tree. Keep the directory for later steps and for the
+    # runner's post-job cleanup.
+    - name: Set local actions aside
+      shell: bash
+      env:
+        LOCAL_ACTIONS: ${{ inputs.local-actions-path }}
+      run: |
+        set -euo pipefail
+        aside="$RUNNER_TEMP/checkout-source-local-actions"
+        rm -rf "$aside"
+        if [[ -n "$LOCAL_ACTIONS" && -d "$GITHUB_WORKSPACE/$LOCAL_ACTIONS" ]]; then
+          cp -R "$GITHUB_WORKSPACE/$LOCAL_ACTIONS" "$aside"
+        fi
+
+    - name: Checkout source
+      uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      with:
+        ref: ${{ inputs.ref || github.sha }}
+        fetch-depth: ${{ inputs.fetch-depth }}
+        path: ${{ inputs.path }}
+        persist-credentials: false
+
+    - name: Restore local actions
+      shell: bash
+      env:
+        LOCAL_ACTIONS: ${{ inputs.local-actions-path }}
+      run: |
+        set -euo pipefail
+        aside="$RUNNER_TEMP/checkout-source-local-actions"
+        if [[ -d "$aside" ]]; then
+          actions_dir="$GITHUB_WORKSPACE/$LOCAL_ACTIONS"
+          mkdir -p "$(dirname "$actions_dir")"
+          rm -rf "$actions_dir"
+          cp -R "$aside" "$actions_dir"
+        fi
+
+    - name: Resolve build settings
+      id: meta
+      shell: bash
+      env:
+        PROJECT_NAME: ${{ inputs.project-name }}
+        TARGET_NAME: ${{ inputs.target-name }}
+        SOURCE_PATH: ${{ inputs.path }}
+      run: |
+        set -euo pipefail
+        project_name="$PROJECT_NAME"
+        if [[ "$SOURCE_PATH" != "." ]]; then
+          project_name="${SOURCE_PATH%/}/$project_name"
+        fi
+        # Read the checked-out app's target, not the dispatch branch's settings
+        # or a hard-coded OS version that could lower a newer release's minimum.
+        project_json="$RUNNER_TEMP/checkout-source-project.json"
+        plutil -convert json -o "$project_json" "$project_name/project.pbxproj"
+        deployment_target="$(python3 "$GITHUB_ACTION_PATH/resolve_deployment_target.py" "$project_json" "$TARGET_NAME")"
+        test -n "$deployment_target"
+        commit="$(git -C "$SOURCE_PATH" rev-parse HEAD)"
+        {
+          echo "commit=$commit"
+          echo "project_name=$project_name"
+          echo "deployment_target=$deployment_target"
+        } >> "$GITHUB_OUTPUT"
+        echo "Checked out $GITHUB_REPOSITORY@$commit (macOS $deployment_target)"
