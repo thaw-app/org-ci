@@ -1,7 +1,8 @@
 name: Dependency SCA
 description: >-
   Scan lockfiles with OSV-Scanner and fail on a vulnerability that is not
-  suppressed. Uploads SARIF to code scanning and the JSON report as an artifact.
+  suppressed. Uploads the JSON report as an artifact and, outside pull requests,
+  SARIF to code scanning.
   Run it after a checkout.
 
 # The CLI is pinned by version and SHA-256. The scanner's own Action image cannot
@@ -114,15 +115,16 @@ runs:
         fi
         exit 0
 
-    # A pull request from a fork has no permission to write to code scanning.
+    # Not on a pull request: the job already fails on an unsuppressed finding,
+    # and an upload there only adds a second check for the same scan. Scheduled
+    # and manual runs keep the default branch's code scanning alerts current.
     - name: Upload SARIF
       if: >-
         ${{
           always()
           && !cancelled()
           && hashFiles('results.sarif') != ''
-          && (github.event_name != 'pull_request'
-              || github.event.pull_request.head.repo.full_name == github.repository)
+          && github.event_name != 'pull_request'
         }}
       uses: github/codeql-action/upload-sarif@2892aa5e19bbd11bc0cff5427e3b750a04d9e3c2 # v4.38.2
       with:

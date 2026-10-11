@@ -1,0 +1,85 @@
+name: Sonar Scan
+description: >-
+  Run the SonarQube Cloud scan with the coverage this run built, or with the
+  last cached coverage when the run skipped the build. Run it after a checkout
+  with fetch-depth 0.
+
+inputs:
+  sonar-token:
+    description: The SONAR_TOKEN secret
+    required: true
+  code-changed:
+    description: >-
+      "true" when an earlier job in this run built the code and uploaded its
+      coverage artifact
+    required: true
+  reports:
+    description: >-
+      Coverage reports, one per line, as sonar.property=path. A report whose
+      file is missing is left out.
+    required: true
+  cache-path:
+    description: File or directory that holds the reports, cached for runs that skip the build
+    required: true
+  artifact-name:
+    description: Name of the coverage artifact the build job uploaded
+    required: false
+    default: coverage-data
+  artifact-path:
+    description: Directory the coverage artifact is downloaded into
+    required: false
+    default: .
+
+runs:
+  using: composite
+  steps:
+    - name: Download coverage
+      if: inputs.code-changed == 'true'
+      uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+      with:
+        name: ${{ inputs.artifact-name }}
+        path: ${{ inputs.artifact-path }}
+
+    # Docs/chore scans skip the build, so reuse the last cached report rather than
+    # let Sonar publish 0%.
+    - name: Restore cached coverage
+      if: inputs.code-changed != 'true'
+      uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+      with:
+        path: ${{ inputs.cache-path }}
+        key: sonar-coverage-${{ github.ref_name }}-${{ github.sha }}
+        restore-keys: |
+          sonar-coverage-${{ github.ref_name }}-
+          sonar-coverage-${{ github.base_ref || github.event.repository.default_branch }}-
+          sonar-coverage-${{ github.event.repository.default_branch }}-
+        fail-on-cache-miss: false
+
+    # Keeps the last report so docs-only pushes still feed Sonar instead of 0%.
+    # The key omits runner.os so any runner can restore it.
+    - name: Cache coverage for later scans
+      if: inputs.code-changed == 'true'
+      uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+      with:
+        path: ${{ inputs.cache-path }}
+        key: sonar-coverage-${{ github.ref_name }}-${{ github.sha }}
+
+    - name: Resolve Sonar coverage args
+      id: coverage
+      shell: bash
+      env:
+        REPORTS: ${{ inputs.reports }}
+      run: bash "$GITHUB_ACTION_PATH/coverage_args.sh"
+
+    # A report exists only if this run built or restored it, so keep the report
+    # paths out of sonar-project.properties.
+    #
+    # A run that skipped the build and found no cached report has nothing to
+    # tell Sonar about coverage. Scanning anyway publishes 0% and turns the
+    # branch's quality gate red, so that run leaves the last analysis alone.
+    - name: SonarQube Scan
+      if: inputs.code-changed == 'true' || steps.coverage.outputs.args != ''
+      uses: SonarSource/sonarqube-scan-action@d209202bc7d53ff1cc128f7f907dac145c9d6ae9 # v8.3.0
+      env:
+        SONAR_TOKEN: ${{ inputs.sonar-token }}
+      with:
+        args: ${{ steps.coverage.outputs.args }}

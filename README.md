@@ -90,7 +90,7 @@ the caller, a check keeps its name, so a branch rule that requires
 | Action | Trigger in the caller | Job permissions |
 | --- | --- | --- |
 | `pr-metadata` | `pull_request_target` | `contents: read`, `pull-requests: write`, `issues: write` |
-| `dependency-sca` | `pull_request`, `push`, `schedule` | `contents: read`, `actions: read`, `security-events: write` |
+| `dependency-sca` | `pull_request`, `schedule` | `contents: read`, `actions: read`, `security-events: write` |
 | `close-stale-issues` | `schedule` | `issues: write` |
 | `block-translation-prs` | `pull_request` on `**/*.xcstrings` | `pull-requests: write`, `issues: write` |
 | `pr-build-command` | `issue_comment` | `actions: write`, `issues: write`, `pull-requests: write` |
@@ -149,6 +149,65 @@ and `area-rules`, a JSON array that maps changed paths to area labels.
 The first rule that matches a path gives it its area. A `fallback` area is
 dropped when a product area also matched. The area checkboxes in the pull
 request template must use the same labels as the rules.
+
+### CI steps
+
+`detect-code-changes` and `sonar-scan` are the two parts of an app's CI workflow
+that do not depend on how the app builds.
+
+`detect-code-changes` reports `code` as `"true"` when a pull request or a push
+changed a path matching `patterns`, so the build can be skipped for a docs-only
+change. A manual run, or a push with no previous commit, counts as code.
+
+```yaml
+changes:
+  runs-on: ubuntu-latest
+  outputs:
+    code: ${{ steps.filter.outputs.code }}
+  steps:
+    - uses: actions/checkout@<sha>
+      with:
+        fetch-depth: 0
+        persist-credentials: false
+    - uses: thaw-app/org-ci/actions/detect-code-changes@<sha>
+      id: filter
+      with:
+        patterns: '(\.swift$|^MyApp\.xcodeproj/|^scripts/)'
+```
+
+`sonar-scan` runs the scan with coverage. When the run built the code, it
+downloads the build job's coverage artifact and caches it. When the run skipped
+the build, it restores the coverage cached by an earlier run of the same branch
+or pull request, then by the base or default branch. A run with no build and no cached coverage does not
+scan, since that would publish 0% coverage.
+
+```yaml
+sonarqube:
+  needs: [changes, build]
+  runs-on: ubuntu-latest
+  env:
+    SONAR_ENABLED: ${{ github.actor != 'dependabot[bot]' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) }}
+  steps:
+    - uses: actions/checkout@<sha>
+      if: env.SONAR_ENABLED == 'true'
+      with:
+        fetch-depth: 0
+        persist-credentials: false
+    - uses: thaw-app/org-ci/actions/sonar-scan@<sha>
+      if: env.SONAR_ENABLED == 'true'
+      with:
+        sonar-token: ${{ secrets.SONAR_TOKEN }}
+        code-changed: ${{ needs.changes.outputs.code }}
+        cache-path: coverage.xml
+        reports: |
+          sonar.coverageReportPaths=coverage.xml
+```
+
+Forks and Dependabot get no `SONAR_TOKEN` on a pull request, so the caller skips
+the action for them, as `SONAR_ENABLED` does above. The `build` job has to run
+on a docs-only change and skip its own steps: GitHub skips a job whose `needs`
+were skipped, and the scan would never restore the cached coverage. Keep the report paths out of `sonar-project.properties`: a
+report exists only when this run built or restored it.
 
 ### Checking out a release
 
