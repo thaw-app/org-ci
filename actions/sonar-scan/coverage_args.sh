@@ -10,7 +10,7 @@ while IFS= read -r line; do
   line="${line%"${line##*[![:space:]]}"}"
   [[ -z "$line" ]] && continue
   if [[ "$line" != *=* ]]; then
-    echo "::error::reports: \"$line\" is not sonar.property=path"
+    echo "::error::reports: \"$line\" is not sonar.property=path" >&2
     exit 1
   fi
   path="${line#*=}"

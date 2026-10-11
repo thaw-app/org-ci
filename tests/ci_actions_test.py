@@ -104,7 +104,7 @@ class DetectCodeChangesTest(unittest.TestCase):
                                  BEFORE=self.before, SHA="HEAD", PATTERNS=patterns)
             self.assertNotEqual(result.returncode, 0, patterns)
             self.assertEqual(output, "")
-            self.assertIn("::error::", result.stdout)
+            self.assertIn("::error::", result.stderr)
 
     def test_a_manual_run_counts_as_code(self):
         self.assertEqual(self.detect(EVENT_NAME="workflow_dispatch"), "code=true\n")
@@ -171,7 +171,7 @@ class CoverageArgsTest(unittest.TestCase):
     def test_a_line_without_a_property_is_an_error(self):
         result, _ = self.args("coverage.xml\n")
         self.assertEqual(result.returncode, 1)
-        self.assertIn("::error::", result.stdout)
+        self.assertIn("::error::", result.stderr)
 
 
 if __name__ == "__main__":

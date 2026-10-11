@@ -45,6 +45,6 @@ elif (( status == 1 )); then
   echo "code=false" >> "$GITHUB_OUTPUT"
   echo "No code-related paths changed; heavy jobs will no-op."
 else
-  echo "::error::patterns is not a valid extended regular expression: ${PATTERNS}"
+  echo "::error::patterns is not a valid extended regular expression: ${PATTERNS}" >&2
   exit 1
 fi
