@@ -90,7 +90,7 @@ the caller, a check keeps its name, so a branch rule that requires
 | Action | Trigger in the caller | Job permissions |
 | --- | --- | --- |
 | `pr-metadata` | `pull_request_target` | `contents: read`, `pull-requests: write`, `issues: write` |
-| `dependency-sca` | `pull_request`, `push`, `schedule` | `contents: read`, `actions: read`, `security-events: write` |
+| `dependency-sca` | `pull_request`, `schedule` | `contents: read`, `actions: read`, `security-events: write` |
 | `close-stale-issues` | `schedule` | `issues: write` |
 | `block-translation-prs` | `pull_request` on `**/*.xcstrings` | `pull-requests: write`, `issues: write` |
 | `pr-build-command` | `issue_comment` | `actions: write`, `issues: write`, `pull-requests: write` |
