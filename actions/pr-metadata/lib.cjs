@@ -27,16 +27,19 @@ const DCO_BOT_LOGINS = new Set([
 
 const MAINTAINER_ASSOCIATIONS = new Set(['OWNER', 'MEMBER', 'COLLABORATOR']);
 
-const escapeRegExp = (text) => text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+const escapeRegExp = (text) => text.replace(/[.*+?^${}()|[\]\\]/g, String.raw`\$&`);
 
 function getSection(body, heading) {
-  const re = new RegExp(`##\\s*${escapeRegExp(heading)}\\s*\\n([\\s\\S]*?)(?=\\n##\\s|$)`, 'i');
+  const re = new RegExp(
+    String.raw`##\s*${escapeRegExp(heading)}\s*\n([\s\S]*?)(?=\n##\s|$)`,
+    'i',
+  );
   const match = body.match(re);
   return match ? match[1] : '';
 }
 
 function isChecked(section, text) {
-  const re = new RegExp(`-\\s*\\[[xX]\\]\\s*${escapeRegExp(text)}`);
+  const re = new RegExp(String.raw`-\s*\[[xX]\]\s*${escapeRegExp(text)}`);
   return re.test(section);
 }
 
@@ -247,26 +250,24 @@ function summaryComment({ marker, labels, failures, warnings, author }) {
   }
 
   if (failures.length > 0) {
-    lines.push('');
-    lines.push(`> [!CAUTION]`);
-    lines.push(`> **Convention issues found**: please fix before merge.`);
-    for (const f of failures) lines.push(`> - ${f}`);
+    lines.push(
+      '',
+      `> [!CAUTION]`,
+      `> **Convention issues found**: please fix before merge.`,
+      ...failures.map((f) => `> - ${f}`),
+    );
   }
 
   if (warnings.length > 0) {
-    lines.push('');
-    lines.push(`> [!WARNING]`);
-    for (const w of warnings) lines.push(`> ${w}`);
+    lines.push('', `> [!WARNING]`, ...warnings.map((w) => `> ${w}`));
   }
 
   if (failures.length === 0 && warnings.length === 0) {
-    lines.push('');
-    lines.push('All convention checks passed. :white_check_mark:');
+    lines.push('', 'All convention checks passed. :white_check_mark:');
   }
 
   if (author) {
-    lines.push('');
-    lines.push(`cc @${author}`);
+    lines.push('', `cc @${author}`);
   }
 
   return lines.join('\n');
