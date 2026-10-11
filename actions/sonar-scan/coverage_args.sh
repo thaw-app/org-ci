@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
-# Writes args=<scanner arguments> to GITHUB_OUTPUT: one -Dproperty=path for each
-# line of REPORTS (sonar.property=path) whose file exists.
+# Writes args=<scanner arguments> to GITHUB_OUTPUT. REPORTS holds one
+# sonar.property=path per line; each one whose file exists becomes a
+# -Dproperty=path argument.
 set -euo pipefail
 
 args=""
@@ -20,6 +21,6 @@ while IFS= read -r line; do
 done <<< "$REPORTS"
 
 if [[ -z "$args" ]]; then
-  echo "::warning::No coverage report found; the scan is skipped unless this run built the code."
+  echo "::warning::No coverage report available; the Sonar scan is skipped unless this run built the code."
 fi
 echo "args=${args}" >> "$GITHUB_OUTPUT"
