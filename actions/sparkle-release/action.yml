@@ -186,7 +186,7 @@ runs:
         mkdir -p "$tools_dir"
 
         archive="$RUNNER_TEMP/Sparkle-${SPARKLE_VERSION}.tar.xz"
-        curl -fsSL --retry 3 -o "$archive" \
+        curl --proto '=https' --tlsv1.2 -fsSL --retry 3 -o "$archive" \
           "https://github.com/sparkle-project/Sparkle/releases/download/${SPARKLE_VERSION}/Sparkle-${SPARKLE_VERSION}.tar.xz"
         # Sparkle publishes no checksums file; this digest was recorded from the
         # published asset, which GitHub keeps immutable once a release exists.
