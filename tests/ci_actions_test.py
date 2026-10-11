@@ -82,6 +82,7 @@ class DetectCodeChangesTest(unittest.TestCase):
     def test_a_code_file_renamed_out_of_the_pattern_counts_as_code(self):
         self.commit("Sources/App.swift")
         self.before = git(self.repo, "rev-parse", "HEAD")
+        (Path(self.repo) / "docs").mkdir()
         git(self.repo, "mv", "Sources/App.swift", "docs/App.md")
         git(self.repo, "commit", "-q", "-m", "move")
         self.assertEqual(self.detect(), "code=true\n")
