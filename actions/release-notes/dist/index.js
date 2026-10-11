@@ -18117,42 +18117,44 @@ class ReleaseNotesResolver {
     let collecting = false;
     let fence = null;
     for (const line of lines) {
-      const marker = /^ {0,3}(`{3,}|~{3,})/.exec(line);
-      if (marker !== null) {
-        const opening = marker[0].trimStart();
-        if (fence === null) {
-          fence = opening;
-        } else if (opening.startsWith(fence.charAt(0)) && opening.length >= fence.length && /^ {0,3}(`+|~+)\s*$/.test(line)) {
-          fence = null;
-        }
-        if (collecting)
-          sectionLines.push(line);
+      const wasFenced = fence !== null;
+      fence = this.fenceAfter(fence, line);
+      const isCode = wasFenced || fence !== null;
+      if (!collecting) {
+        collecting = !isCode && this.isReleaseHeading(line, tag);
         continue;
       }
-      if (fence !== null) {
-        if (collecting)
-          sectionLines.push(line);
-        continue;
-      }
-      if (collecting && /^##(?:[\t ]|$)/.test(line))
+      if (!isCode && /^##(?:[\t ]|$)/.test(line))
         break;
-      if (collecting) {
-        sectionLines.push(line);
-      } else if (this.isReleaseHeading(line, tag)) {
-        collecting = true;
-      }
+      sectionLines.push(line);
     }
     if (!collecting)
       return { kind: "missing" };
     return { kind: "found", body: sectionLines.join(`
 `).trim() };
   }
+  fenceAfter(fence, line) {
+    const marker = /^ {0,3}(`{3,}|~{3,})/.exec(line);
+    if (marker === null)
+      return fence;
+    const opening = marker[0].trimStart();
+    if (fence === null)
+      return opening;
+    const closes = opening.startsWith(fence.charAt(0)) && opening.length >= fence.length && /^ {0,3}(`+|~+)\s*$/.test(line);
+    return closes ? null : fence;
+  }
   isReleaseHeading(line, tag) {
     const prefix = /^##[\t ]+/.exec(line);
     if (prefix === null)
       return false;
     const heading = line.slice(prefix[0].length);
-    const candidates = [tag, `[${tag}]`, `\\[${tag}]`, `[${tag}\\]`, `\\[${tag}\\]`];
+    const candidates = [
+      tag,
+      `[${tag}]`,
+      String.raw`\[${tag}]`,
+      String.raw`[${tag}\]`,
+      String.raw`\[${tag}\]`
+    ];
     return candidates.some((candidate) => {
       if (!heading.startsWith(candidate))
         return false;
