@@ -27,15 +27,16 @@ const DCO_BOT_LOGINS = new Set([
 
 const MAINTAINER_ASSOCIATIONS = new Set(['OWNER', 'MEMBER', 'COLLABORATOR']);
 
+const escapeRegExp = (text) => text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+
 function getSection(body, heading) {
-  const re = new RegExp(`##\\s*${heading}\\s*\\n([\\s\\S]*?)(?=\\n##\\s|$)`, 'i');
+  const re = new RegExp(`##\\s*${escapeRegExp(heading)}\\s*\\n([\\s\\S]*?)(?=\\n##\\s|$)`, 'i');
   const match = body.match(re);
   return match ? match[1] : '';
 }
 
 function isChecked(section, text) {
-  const escaped = text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-  const re = new RegExp(`-\\s*\\[[xX]\\]\\s*${escaped}`);
+  const re = new RegExp(`-\\s*\\[[xX]\\]\\s*${escapeRegExp(text)}`);
   return re.test(section);
 }
 
@@ -90,7 +91,7 @@ function areasForPaths(paths, rules) {
   const kindOf = new Map(rules.map((rule) => [rule.label, rule.kind]));
   const hasProduct = [...areas].some((label) => kindOf.get(label) === 'product');
   if (hasProduct) {
-    for (const label of [...areas]) {
+    for (const label of areas) {
       if (kindOf.get(label) === 'fallback') areas.delete(label);
     }
   }
@@ -101,7 +102,7 @@ function areasForPaths(paths, rules) {
 function labelChanges(body, paths, rules) {
   const prTypeSection = getSection(body, 'PR Type');
   const areaSection = getSection(body, 'Area');
-  const breakingSection = getSection(body, 'Does this PR introduce a breaking change\\?');
+  const breakingSection = getSection(body, 'Does this PR introduce a breaking change?');
 
   const toAdd = new Set();
   const toRemove = new Set();
@@ -136,7 +137,7 @@ function labelChanges(body, paths, rules) {
 // Sign-off must live in the trailing trailer block (as `git commit -s`
 // writes it), so a `Signed-off-by:` line quoted in the body does not count.
 function trailerBlock(message) {
-  const lines = message.replace(/\s+$/, '').split('\n');
+  const lines = message.trimEnd().split('\n');
   let start = lines.length;
   for (let i = lines.length - 1; i >= 0; i--) {
     const line = lines[i];
@@ -162,7 +163,7 @@ function commitsMissingSignoff(commits) {
     }
     const signoffEmails = [];
     for (const line of trailerBlock(message)) {
-      const match = line.match(/^Signed-off-by:\s*.+<([^>]+)>\s*$/i);
+      const match = line.match(/^Signed-off-by:[^<]+<([^>]+)>\s*$/i);
       if (match) signoffEmails.push(match[1].trim().toLowerCase());
     }
     if (!signoffEmails.includes(authorEmail)) missing.push(entry.sha.slice(0, 8));

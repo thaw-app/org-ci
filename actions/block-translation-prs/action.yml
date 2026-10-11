@@ -10,6 +10,13 @@ inputs:
   crowdin-url:
     description: Address of the app's Crowdin project
     required: true
+  translation-sync-branch:
+    description: >-
+      Branch Crowdin's own pull requests come from. One opened from it in this
+      repo by a maintainer is left alone. When empty, any pull request with
+      "crowdin" in its title is left alone, which its author can arrange.
+    required: false
+    default: ""
 
 runs:
   using: composite
@@ -19,13 +26,21 @@ runs:
       env:
         PRODUCT: ${{ inputs.product }}
         CROWDIN_URL: ${{ inputs.crowdin-url }}
+        SYNC_BRANCH: ${{ inputs.translation-sync-branch }}
       with:
         script: |
           const pr = context.payload.pull_request;
           if (!pr) return;
 
-          // Crowdin's own pull requests are how translations arrive.
-          if ((pr.title || '').toLowerCase().includes('crowdin')) return;
+          // Crowdin's own pull requests are how translations arrive. A maintainer
+          // opens them from the sync branch in this repo.
+          const { PRODUCT, CROWDIN_URL, SYNC_BRANCH } = process.env;
+          const isSync = SYNC_BRANCH
+            ? pr.head?.ref === SYNC_BRANCH &&
+              pr.head?.repo?.full_name === `${context.repo.owner}/${context.repo.repo}` &&
+              ['OWNER', 'MEMBER', 'COLLABORATOR'].includes(pr.author_association || '')
+            : (pr.title || '').toLowerCase().includes('crowdin');
+          if (isSync) return;
 
           const files = await github.paginate(github.rest.pulls.listFiles, {
             owner: context.repo.owner,
@@ -33,10 +48,10 @@ runs:
             pull_number: pr.number,
           });
 
-          const onlyTranslations = files.every(f => f.filename.endsWith('.xcstrings'));
+          const onlyTranslations =
+            files.length > 0 && files.every(f => f.filename.endsWith('.xcstrings'));
           if (!onlyTranslations) return;
 
-          const { PRODUCT, CROWDIN_URL } = process.env;
           const message = [
             '### Manual translation detected',
             '',

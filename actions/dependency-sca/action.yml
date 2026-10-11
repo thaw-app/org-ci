@@ -36,7 +36,13 @@ runs:
       env:
         CONFIG: ${{ inputs.config }}
         POLICY_URL: ${{ inputs.policy-url }}
-      run: python3 "$GITHUB_ACTION_PATH/validate_suppressions.py" "$CONFIG" "$POLICY_URL"
+      run: |
+        set -euo pipefail
+        if [[ ! -f "$CONFIG" ]]; then
+          echo "::error::$CONFIG is missing"
+          exit 1
+        fi
+        python3 "$GITHUB_ACTION_PATH/validate_suppressions.py" "$POLICY_URL" < "$CONFIG"
 
     - name: Install OSV-Scanner
       shell: bash

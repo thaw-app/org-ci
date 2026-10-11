@@ -1,14 +1,14 @@
 """Checks that every suppression in an OSV-Scanner config says why and until when.
 
 A suppression with no reason cannot be reviewed, and one with no expiry is never
-looked at again. Usage: validate_suppressions.py <config.toml> <policy-url>
+looked at again. Reads the config on standard input.
+Usage: validate_suppressions.py <policy-url> < config.toml
 """
 
 from __future__ import annotations
 
 import sys
 import tomllib
-from pathlib import Path
 
 
 def suppression_errors(config: dict, policy_url: str) -> list[str]:
@@ -36,13 +36,8 @@ def suppression_errors(config: dict, policy_url: str) -> list[str]:
 
 
 def main(argv: list[str]) -> int:
-    path = Path(argv[1])
-    policy_url = argv[2]
-    if not path.is_file():
-        print(f"::error::{path} is missing")
-        return 1
-
-    config = tomllib.loads(path.read_text(encoding="utf-8"))
+    policy_url = argv[1]
+    config = tomllib.load(sys.stdin.buffer)
     errors = suppression_errors(config, policy_url)
     for message in errors:
         print(f"::error::{message}")

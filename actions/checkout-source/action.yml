@@ -55,6 +55,12 @@ runs:
         LOCAL_ACTIONS: ${{ inputs.local-actions-path }}
       run: |
         set -euo pipefail
+        # The restore step deletes this directory before copying it back, so it
+        # has to stay inside the workspace.
+        if [[ "$LOCAL_ACTIONS" == /* || "/$LOCAL_ACTIONS/" == */../* ]]; then
+          echo "::error::local-actions-path must be a path inside the workspace, got: $LOCAL_ACTIONS"
+          exit 1
+        fi
         aside="$RUNNER_TEMP/checkout-source-local-actions"
         rm -rf "$aside"
         if [[ -n "$LOCAL_ACTIONS" && -d "$GITHUB_WORKSPACE/$LOCAL_ACTIONS" ]]; then
@@ -100,7 +106,7 @@ runs:
         # or a hard-coded OS version that could lower a newer release's minimum.
         project_json="$RUNNER_TEMP/checkout-source-project.json"
         plutil -convert json -o "$project_json" "$project_name/project.pbxproj"
-        deployment_target="$(python3 "$GITHUB_ACTION_PATH/resolve_deployment_target.py" "$project_json" "$TARGET_NAME")"
+        deployment_target="$(python3 "$GITHUB_ACTION_PATH/resolve_deployment_target.py" "$TARGET_NAME" < "$project_json")"
         test -n "$deployment_target"
         commit="$(git -C "$SOURCE_PATH" rev-parse HEAD)"
         {

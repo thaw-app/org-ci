@@ -1,8 +1,8 @@
 """Prints an app target's MACOSX_DEPLOYMENT_TARGET for its Release configuration.
 
-Reads the project as JSON (plutil -convert json). XcodeGen writes the setting on
-the project and not the target, so the project's Release configuration is the
-fallback. Usage: resolve_deployment_target.py <project.json> <target name>
+Reads the project as JSON (plutil -convert json) on standard input. XcodeGen
+writes the setting on the project and not the target, so the project's Release
+configuration is the fallback. Usage: resolve_deployment_target.py <target name>
 """
 
 import json
@@ -27,5 +27,4 @@ def deployment_target(objects: dict, target_name: str) -> str:
 
 
 if __name__ == "__main__":
-    with open(sys.argv[1], encoding="utf-8") as handle:
-        print(deployment_target(json.load(handle)["objects"], sys.argv[2]))
+    print(deployment_target(json.load(sys.stdin)["objects"], sys.argv[1]))

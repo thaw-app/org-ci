@@ -38,21 +38,27 @@ module.exports = async function run({ github, context, core }) {
     rules,
   );
 
-  const existing = (
-    await github.paginate(github.rest.issues.listLabelsOnIssue, {
-      owner,
-      repo,
-      issue_number: pr.number,
-    })
-  ).map((l) => l.name);
+  const existing = new Set(
+    (
+      await github.paginate(github.rest.issues.listLabelsOnIssue, {
+        owner,
+        repo,
+        issue_number: pr.number,
+      })
+    ).map((l) => l.name),
+  );
 
-  const addList = [...toAdd].filter((l) => !existing.includes(l));
+  const addList = [...toAdd].filter((l) => !existing.has(l));
   if (addList.length > 0) {
     await github.rest.issues.addLabels({ owner, repo, issue_number: pr.number, labels: addList });
   }
   for (const label of toRemove) {
-    if (existing.includes(label)) {
+    if (!existing.has(label)) continue;
+    try {
       await github.rest.issues.removeLabel({ owner, repo, issue_number: pr.number, name: label });
+    } catch (error) {
+      // Someone, or another run, took the label off first.
+      if (error.status !== 404) throw error;
     }
   }
 
@@ -90,7 +96,8 @@ module.exports = async function run({ github, context, core }) {
     author: pr.user?.login || '',
   });
 
-  // Upsert: find the bot comment with our marker, update or create.
+  // Upsert: find the bot comment that starts with our marker, update or create.
+  // A comment that only quotes the marker further down is someone else's.
   const comments = await github.paginate(github.rest.issues.listComments, {
     owner,
     repo,
@@ -98,7 +105,7 @@ module.exports = async function run({ github, context, core }) {
     per_page: 100,
   });
   const botComment = comments.find(
-    (c) => c.user?.type === 'Bot' && (c.body || '').includes(marker),
+    (c) => c.user?.type === 'Bot' && (c.body || '').startsWith(marker),
   );
   if (botComment) {
     await github.rest.issues.updateComment({ owner, repo, comment_id: botComment.id, body: commentBody });
@@ -107,7 +114,7 @@ module.exports = async function run({ github, context, core }) {
   }
 
   if (warnings.length > 0) {
-    core.summary
+    await core.summary
       .addHeading('PR size heads-up')
       .addList(warnings)
       .addRaw('_Informational only, does not block merge._')

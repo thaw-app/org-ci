@@ -36,8 +36,10 @@ runs:
         REPOSITORY: ${{ github.repository }}
       run: |
         set -euo pipefail
-        branch=$(gh api "$PR_URL" --jq '.head.ref')
-        head_repo=$(gh api "$PR_URL" --jq '.head.repo.full_name')
+        # A ref name has no tab in it, so one read can carry both values.
+        IFS=$'\t' read -r branch head_repo < <(
+          gh api "$PR_URL" --jq '[.head.ref, .head.repo.full_name // ""] | @tsv'
+        )
         same_repo=false
         if [[ "$head_repo" == "$REPOSITORY" ]]; then
           same_repo=true

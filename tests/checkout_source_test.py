@@ -36,8 +36,9 @@ class DeploymentTargetTest(unittest.TestCase):
             resolve.deployment_target(objects, "Missing")
 
     def test_no_setting_anywhere_is_an_error(self):
+        objects = project({}, {})
         with self.assertRaises(KeyError):
-            resolve.deployment_target(project({}, {}), "App")
+            resolve.deployment_target(objects, "App")
 
 
 if __name__ == "__main__":
