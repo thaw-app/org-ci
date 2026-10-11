@@ -93,6 +93,19 @@ class DetectCodeChangesTest(unittest.TestCase):
         self.commit("docs/guide.md")
         self.assertEqual(self.detect(), "code=true\n")
 
+    def test_a_code_file_with_a_non_ascii_name_counts_as_code(self):
+        self.commit("Sources/Café.swift")
+        self.assertEqual(self.detect(), "code=true\n")
+
+    def test_a_pattern_that_is_not_a_valid_expression_fails_the_step(self):
+        self.commit("Sources/App.swift")
+        for patterns in (r"(\.swift$", "-swift("):
+            result, output = run(DETECT, self.repo, EVENT_NAME="push", BASE_REF="",
+                                 BEFORE=self.before, SHA="HEAD", PATTERNS=patterns)
+            self.assertNotEqual(result.returncode, 0, patterns)
+            self.assertEqual(output, "")
+            self.assertIn("::error::", result.stdout)
+
     def test_a_manual_run_counts_as_code(self):
         self.assertEqual(self.detect(EVENT_NAME="workflow_dispatch"), "code=true\n")
 

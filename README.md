@@ -177,8 +177,8 @@ changes:
 
 `sonar-scan` runs the scan with coverage. When the run built the code, it
 downloads the build job's coverage artifact and caches it. When the run skipped
-the build, it restores the last cached coverage for the branch, then for the
-base or default branch. A run with no build and no cached coverage does not
+the build, it restores the coverage cached by an earlier run of the same branch
+or pull request, then by the base or default branch. A run with no build and no cached coverage does not
 scan, since that would publish 0% coverage.
 
 ```yaml
