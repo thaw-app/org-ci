@@ -355,9 +355,10 @@ every file and writes a report to the job summary instead.
 
 The order is fixed so that nothing is public until the end: an unknown
 discussion category, a missing bundle or a failed Sparkle step stops the run
-while the release is still a draft, and the appcast is pushed after the release
-is public, so no feed item names a ZIP that is not there yet. A tag whose
-release is already published is refused.
+while both releases are still drafts. The caller's release is published first,
+then the updates release, then the appcast, so no feed item names a ZIP that is
+not there yet. A tag whose release is already published is refused, and so is a
+tag that names another commit than the one the build job built.
 
 ```yaml
 jobs:
@@ -375,6 +376,7 @@ jobs:
       target-name: MyApp
       app-name: MyApp.app
       asset-prefix: MyApp
+      commit: ${{ needs.build.outputs.commit }}
       build-artifact: ${{ needs.build.outputs.artifact-name }}
       app-zip-name: ${{ needs.build.outputs.app-zip-name }}
       dmg-name: ${{ needs.build.outputs.dmg-name }}
@@ -405,7 +407,7 @@ Inputs:
 | `app-name` | yes | Name of the `.app` bundle |
 | `asset-prefix` | yes | Prefix of the Sparkle ZIP and the SBOM |
 | `appcast-title` | no | Title of a new appcast; empty uses `asset-prefix` |
-| `build-artifact`, `app-zip-name`, `dmg-name`, `dmg-digest`, `sbom-name`, `sbom-digest` | yes | The build workflow's outputs of the same names |
+| `commit`, `build-artifact`, `app-zip-name`, `dmg-name`, `dmg-digest`, `sbom-name`, `sbom-digest` | yes | The build workflow's outputs of the same names; the tag must name `commit` |
 | `dmg-bundle-name`, `sbom-bundle-name` | no | The build's attestation bundles; required unless `dry-run` |
 | `release-notes` | no | Notes override; empty reads the changelog, and GitHub generates them when it has no section for the tag |
 | `changelog-paths` | no | Changelog files to look in, one per line, default `CHANGELOG.md` |
