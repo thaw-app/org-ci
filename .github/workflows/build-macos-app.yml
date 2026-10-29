@@ -1,0 +1,373 @@
+name: Build macOS app
+
+# Builds, signs, notarizes and attests a macOS app in one job here, away from
+# the calling workflow. The provenance then names this file as the builder,
+# which is what takes a release from SLSA v1.0 Build L2 to Build L3: the
+# caller chooses what to build, not how. Verify a download with
+#
+#   gh attestation verify App.dmg --owner <org> \
+#     --signer-workflow thaw-app/org-ci/.github/workflows/build-macos-app.yml
+#
+# The caller downloads the artifact this workflow uploads, publishes the
+# release and attaches the attestation bundles itself.
+
+on:
+  workflow_call:
+    inputs:
+      ref:
+        description: Git ref of the caller to build, for example refs/tags/1.2.3
+        required: true
+        type: string
+      version:
+        description: Version the ref carries, for example 1.2.3. Names the SBOM and the artifact.
+        required: true
+        type: string
+      project-name:
+        description: Xcode project relative to the checkout, for example App.xcodeproj
+        required: true
+        type: string
+      target-name:
+        description: App target whose Release deployment target is used
+        required: true
+        type: string
+      scheme-name:
+        description: Xcode scheme to archive
+        required: true
+        type: string
+      app-name:
+        description: Name of the .app bundle, for example App.app
+        required: true
+        type: string
+      dmg-name:
+        description: Name of the DMG to produce, for example App.dmg
+        required: true
+        type: string
+      asset-prefix:
+        description: Prefix of the SBOM file name (Prefix_version.cdx.json)
+        required: true
+        type: string
+      environment:
+        description: >-
+          The caller's environment that holds the signing secrets. Its
+          protection rules apply before any secret is read.
+        required: true
+        type: string
+      runner:
+        description: Runner label with the Xcode the app needs
+        required: false
+        type: string
+        default: macos-latest
+      xcode-version:
+        description: Passed to setup-xcode; latest includes betas
+        required: false
+        type: string
+        default: latest
+      prepare-script:
+        description: >-
+          Script inside the checkout to run with sh before the build, for a
+          tool the project's build phases need. ~/.local/bin is put on PATH
+          afterwards when it exists. Empty runs nothing.
+        required: false
+        type: string
+        default: ""
+      build-settings:
+        description: Extra xcodebuild settings, one NAME=value per line
+        required: false
+        type: string
+        default: ""
+      bundle-identifier:
+        description: Bundle identifier of the app, needed with a provisioning profile
+        required: false
+        type: string
+        default: ""
+      attest:
+        description: >-
+          Attest the DMG and the SBOM. Off for dry runs: an attestation is a
+          permanent public record.
+        required: false
+        type: boolean
+        default: true
+      retention-days:
+        description: Days the build artifact is kept
+        required: false
+        type: number
+        default: 7
+    # Named like the caller's secrets: a `uses:` job cannot set an environment,
+    # so environment secrets only arrive through `secrets: inherit`, which
+    # matches them by name.
+    secrets:
+      APPLE_APPLICATION_CERT:
+        description: Base64-encoded Developer ID Application certificate (.p12)
+        required: true
+      APPLE_APPLICATION_CERT_PASSWORD:
+        description: Password of the .p12
+        required: true
+      APPLE_ID:
+        description: Apple ID for notarytool
+        required: true
+      APPLE_ID_PASSWORD:
+        description: App-specific password of that Apple ID
+        required: true
+      APPLE_TEAM_ID:
+        description: Apple Developer Team ID
+        required: true
+      PROVISIONING_PROFILE:
+        description: Base64-encoded Developer ID provisioning profile, when the app needs one
+        required: false
+    outputs:
+      commit:
+        description: Commit that was built
+        value: ${{ jobs.build.outputs.commit }}
+      artifact-name:
+        description: Workflow artifact holding the DMG, SBOM, checksums, app ZIP and bundles
+        value: ${{ jobs.build.outputs.artifact-name }}
+      app-zip-name:
+        description: File name of the exported app ZIP inside the artifact (unzip with ditto)
+        value: ${{ jobs.build.outputs.app-zip-name }}
+      dmg-name:
+        description: File name of the DMG
+        value: ${{ jobs.build.outputs.dmg-name }}
+      dmg-digest:
+        description: sha256:<hex> of the DMG
+        value: ${{ jobs.build.outputs.dmg-digest }}
+      dmg-bundle-name:
+        description: File name of the DMG attestation bundle, empty when attest was off
+        value: ${{ jobs.build.outputs.dmg-bundle-name }}
+      sbom-name:
+        description: File name of the CycloneDX SBOM
+        value: ${{ jobs.build.outputs.sbom-name }}
+      sbom-digest:
+        description: sha256:<hex> of the SBOM
+        value: ${{ jobs.build.outputs.sbom-digest }}
+      sbom-bundle-name:
+        description: File name of the SBOM attestation bundle, empty when attest was off
+        value: ${{ jobs.build.outputs.sbom-bundle-name }}
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ${{ inputs.runner }}
+    environment: ${{ inputs.environment }}
+    permissions:
+      contents: read
+      id-token: write
+      attestations: write
+    outputs:
+      commit: ${{ steps.source.outputs.commit }}
+      artifact-name: ${{ steps.names.outputs.artifact-name }}
+      app-zip-name: ${{ steps.names.outputs.app-zip-name }}
+      dmg-name: ${{ inputs.dmg-name }}
+      dmg-digest: ${{ steps.digests.outputs.dmg-digest }}
+      dmg-bundle-name: ${{ steps.bundles.outputs.dmg-bundle-name }}
+      sbom-name: ${{ steps.sbom.outputs.name }}
+      sbom-digest: ${{ steps.digests.outputs.sbom-digest }}
+      sbom-bundle-name: ${{ steps.bundles.outputs.sbom-bundle-name }}
+    steps:
+      # The caller is checked out, not this repository, so the actions below
+      # are pinned like a caller pins them.
+      - name: Checkout source
+        id: source
+        uses: thaw-app/org-ci/actions/checkout-source@dedf96e25ba6d24867c18e706b8bd9f6b1fb09d0
+        with:
+          project-name: ${{ inputs.project-name }}
+          target-name: ${{ inputs.target-name }}
+          ref: ${{ inputs.ref }}
+          local-actions-path: ""
+
+      - name: Select Xcode
+        uses: maxim-lobanov/setup-xcode@ed7a3b1fda3918c0306d1b724322adc0b8cc0a90 # v1.7.0
+        with:
+          xcode-version: ${{ inputs.xcode-version }}
+
+      - name: Run prepare script
+        if: inputs.prepare-script != ''
+        env:
+          PREPARE_SCRIPT: ${{ inputs.prepare-script }}
+        run: |
+          set -euo pipefail
+          if [[ "$PREPARE_SCRIPT" == /* || "/$PREPARE_SCRIPT/" == */../* ]]; then
+            echo "::error::prepare-script must be a path inside the checkout, got: $PREPARE_SCRIPT"
+            exit 1
+          fi
+          if [[ ! -f "$PREPARE_SCRIPT" ]]; then
+            echo "No $PREPARE_SCRIPT at this ref; nothing to prepare"
+            exit 0
+          fi
+          sh "$PREPARE_SCRIPT"
+          if [[ -d "$HOME/.local/bin" ]]; then
+            echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+          fi
+
+      - name: Configure signing
+        id: signing
+        uses: thaw-app/org-ci/actions/configure-signing@dedf96e25ba6d24867c18e706b8bd9f6b1fb09d0
+        with:
+          apple-application-cert: ${{ secrets.APPLE_APPLICATION_CERT }}
+          apple-application-cert-password: ${{ secrets.APPLE_APPLICATION_CERT_PASSWORD }}
+          apple-id: ${{ secrets.APPLE_ID }}
+          apple-id-password: ${{ secrets.APPLE_ID_PASSWORD }}
+          apple-team-id: ${{ secrets.APPLE_TEAM_ID }}
+          provisioning-profile: ${{ secrets.PROVISIONING_PROFILE }}
+
+      - name: Build
+        uses: thaw-app/org-ci/actions/build@dedf96e25ba6d24867c18e706b8bd9f6b1fb09d0
+        with:
+          apple-team-id: ${{ secrets.APPLE_TEAM_ID }}
+          project-name: ${{ steps.source.outputs.project-name }}
+          scheme-name: ${{ inputs.scheme-name }}
+          deployment-target: ${{ steps.source.outputs.deployment-target }}
+          build-settings: ${{ inputs.build-settings }}
+
+      - name: Export archive and package DMG
+        uses: thaw-app/org-ci/actions/export-and-package@dedf96e25ba6d24867c18e706b8bd9f6b1fb09d0
+        with:
+          apple-team-id: ${{ secrets.APPLE_TEAM_ID }}
+          app-name: ${{ inputs.app-name }}
+          dmg-name: ${{ inputs.dmg-name }}
+          provisioning-profile-name: ${{ steps.signing.outputs.provisioning-profile-name }}
+          bundle-identifier: ${{ inputs.bundle-identifier }}
+
+      - name: Notarize DMG
+        uses: thaw-app/org-ci/actions/notarize-and-validate@dedf96e25ba6d24867c18e706b8bd9f6b1fb09d0
+        with:
+          dmg-name: ${{ inputs.dmg-name }}
+          app-name: ${{ inputs.app-name }}
+
+      - name: Generate CycloneDX SBOM
+        id: sbom
+        env:
+          ASSET_PREFIX: ${{ inputs.asset-prefix }}
+          VERSION: ${{ inputs.version }}
+          # Syft pinned by version and archive digest; bump both from the
+          # release's syft_<version>_checksums.txt.
+          SYFT_VERSION: 1.42.3
+          SYFT_SHA256_DARWIN_ARM64: d71ee7db2be0fe2e96f679fd9d69ef04274cc86c8604707797080a21070b3f32
+          SYFT_SHA256_DARWIN_AMD64: c00d01b7c43504708c8922d643d1cbaefa62ca8876baa4d2c2cf4c3be43707a9
+        run: |
+          set -euo pipefail
+          if [[ ! "$ASSET_PREFIX" =~ ^[A-Za-z0-9._-]+$ || ! "$VERSION" =~ ^[A-Za-z0-9._-]+$ ]]; then
+            echo "::error::asset-prefix and version must be file-name safe, got: ${ASSET_PREFIX}_${VERSION}"
+            exit 1
+          fi
+
+          case "$(uname -m)" in
+            arm64) syft_arch=arm64; syft_sha="$SYFT_SHA256_DARWIN_ARM64" ;;
+            x86_64) syft_arch=amd64; syft_sha="$SYFT_SHA256_DARWIN_AMD64" ;;
+            *) echo "Unsupported runner architecture: $(uname -m)"; exit 1 ;;
+          esac
+
+          bin="$RUNNER_TEMP/syft-bin"
+          archive="$RUNNER_TEMP/syft.tar.gz"
+          mkdir -p "$bin"
+          curl --proto '=https' --tlsv1.2 -sSfL --retry 3 \
+            "https://github.com/anchore/syft/releases/download/v${SYFT_VERSION}/syft_${SYFT_VERSION}_darwin_${syft_arch}.tar.gz" \
+            -o "$archive"
+          echo "${syft_sha}  ${archive}" | shasum -a 256 -c -
+          tar -xzf "$archive" -C "$bin" syft
+          export PATH="$bin:$PATH"
+          syft version
+
+          # The source tree, not the app: SwiftPM dependencies are linked
+          # statically, so only Package.resolved lists them. create-dmg and
+          # brand-assets are export-and-package's checkouts, not the app's.
+          name="${ASSET_PREFIX}_${VERSION}.cdx.json"
+          syft scan dir:. \
+            --exclude './build/**' \
+            --exclude './.git/**' \
+            --exclude './.github/**' \
+            --exclude './create-dmg/**' \
+            --exclude './brand-assets/**' \
+            --source-name "$ASSET_PREFIX" \
+            --source-version "$VERSION" \
+            -o "cyclonedx-json=build/${name}"
+          test -f "build/${name}"
+          echo "name=${name}" >> "$GITHUB_OUTPUT"
+
+      - name: Write checksums
+        id: digests
+        env:
+          DMG_NAME: ${{ inputs.dmg-name }}
+          SBOM_NAME: ${{ steps.sbom.outputs.name }}
+        run: |
+          set -euo pipefail
+          # Basename-only lines, so `shasum -c` works beside the downloaded assets.
+          cd build
+          shasum -a 256 "$DMG_NAME" | tee "${DMG_NAME}.sha256"
+          shasum -a 256 "$SBOM_NAME" | tee "${SBOM_NAME}.sha256"
+          {
+            echo "dmg-digest=sha256:$(awk '{print $1}' "${DMG_NAME}.sha256")"
+            echo "sbom-digest=sha256:$(awk '{print $1}' "${SBOM_NAME}.sha256")"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Attest DMG
+        id: attest-dmg
+        if: inputs.attest
+        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
+        with:
+          subject-path: build/${{ inputs.dmg-name }}
+
+      - name: Attest SBOM
+        id: attest-sbom
+        if: inputs.attest
+        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
+        with:
+          subject-path: build/${{ steps.sbom.outputs.name }}
+
+      # Named after their subject, so a release carries App.dmg.intoto.jsonl
+      # next to App.dmg.
+      - name: Stage attestation bundles
+        id: bundles
+        if: inputs.attest
+        env:
+          DMG_NAME: ${{ inputs.dmg-name }}
+          SBOM_NAME: ${{ steps.sbom.outputs.name }}
+          DMG_BUNDLE_PATH: ${{ steps.attest-dmg.outputs.bundle-path }}
+          SBOM_BUNDLE_PATH: ${{ steps.attest-sbom.outputs.bundle-path }}
+        run: |
+          set -euo pipefail
+          test -f "$DMG_BUNDLE_PATH"
+          test -f "$SBOM_BUNDLE_PATH"
+          cp "$DMG_BUNDLE_PATH" "build/${DMG_NAME}.intoto.jsonl"
+          cp "$SBOM_BUNDLE_PATH" "build/${SBOM_NAME}.intoto.jsonl"
+          {
+            echo "dmg-bundle-name=${DMG_NAME}.intoto.jsonl"
+            echo "sbom-bundle-name=${SBOM_NAME}.intoto.jsonl"
+          } >> "$GITHUB_OUTPUT"
+
+      # ditto keeps the bundle's symlinks and resource forks, which a plain
+      # artifact upload would not, so the caller gets back an app that still
+      # passes codesign and carries its notarization ticket.
+      - name: Zip exported app
+        id: names
+        env:
+          APP_NAME: ${{ inputs.app-name }}
+          VERSION: ${{ inputs.version }}
+        run: |
+          set -euo pipefail
+          zip_name="${APP_NAME}.zip"
+          rm -f "build/${zip_name}"
+          ditto -c -k --sequesterRsrc --keepParent "build/Export/${APP_NAME}" "build/${zip_name}"
+          {
+            echo "app-zip-name=${zip_name}"
+            echo "artifact-name=build-${VERSION}"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Upload build artifact
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: ${{ steps.names.outputs.artifact-name }}
+          if-no-files-found: error
+          retention-days: ${{ inputs.retention-days }}
+          path: |
+            build/${{ inputs.dmg-name }}
+            build/${{ inputs.dmg-name }}.sha256
+            build/${{ steps.sbom.outputs.name }}
+            build/${{ steps.sbom.outputs.name }}.sha256
+            build/${{ steps.names.outputs.app-zip-name }}
+            build/*.intoto.jsonl
+
+      - name: Cleanup keychain
+        if: always()
+        run: security delete-keychain "$RUNNER_TEMP/buildagent.keychain" || true

@@ -225,6 +225,113 @@ be older than the workflow's own local actions, so the action sets
     target-name: MyApp
 ```
 
+## Reusable workflows
+
+### Building a release
+
+`.github/workflows/build-macos-app.yml` builds, signs, notarizes and attests a
+macOS app in one job of its own. It runs `checkout-source`, `configure-signing`,
+`build`, `export-and-package` and `notarize-and-validate`, then generates a
+CycloneDX SBOM with a pinned syft, writes sha256 checksums, attests the DMG and
+the SBOM, zips the exported `.app` with `ditto` and uploads everything as one
+workflow artifact.
+
+It exists for SLSA Build L3. When a caller runs the actions in its own job, the
+caller's workflow is the builder named in the provenance, and GitHub grants
+Build L2. When the build runs in this reusable workflow, the caller only chooses
+what to build; the provenance names this file as its signer, which is Build L3.
+The level is about who defines the build steps and signs the provenance. The
+project's own build phases and its `prepare-script` still run from the
+checked-out source, as in any build of that source. Verify a download with:
+
+```sh
+gh attestation verify App.dmg --owner <org> \
+  --signer-workflow thaw-app/org-ci/.github/workflows/build-macos-app.yml
+```
+
+Call it as a job. The caller's job needs `id-token: write` and
+`attestations: write`; the called workflow asks for nothing more. A `uses:` job
+cannot set an `environment`, so the workflow takes the environment's name as an
+input and applies its protection rules before any secret is read. Pass the
+secrets with `secrets: inherit`, which matches them by the names below. It is the
+only way environment secrets reach a called workflow, and it works for callers
+in the same organization. A caller that keeps them as repository secrets can
+map them one by one under `secrets:` instead.
+
+```yaml
+jobs:
+  build:
+    uses: thaw-app/org-ci/.github/workflows/build-macos-app.yml@<sha>
+    permissions:
+      contents: read
+      id-token: write
+      attestations: write
+    with:
+      ref: refs/tags/${{ inputs.tag }}
+      version: ${{ inputs.tag }}
+      project-name: MyApp.xcodeproj
+      target-name: MyApp
+      scheme-name: MyApp
+      app-name: MyApp.app
+      dmg-name: MyApp.dmg
+      asset-prefix: MyApp
+      environment: release
+      runner: macos-latest
+      prepare-script: scripts/install-swiftlint.sh
+      attest: ${{ !inputs.dry_run }}
+    secrets: inherit
+```
+
+Inputs:
+
+| Input | Required | Purpose |
+| --- | --- | --- |
+| `ref` | yes | Git ref of the caller to build, for example `refs/tags/1.2.3` |
+| `version` | yes | Version the ref carries. Names the SBOM and the artifact |
+| `project-name` | yes | Xcode project relative to the checkout |
+| `target-name` | yes | App target whose Release deployment target is used |
+| `scheme-name` | yes | Scheme to archive |
+| `app-name` | yes | Name of the `.app` bundle |
+| `dmg-name` | yes | Name of the DMG to produce |
+| `asset-prefix` | yes | Prefix of the SBOM file name (`Prefix_version.cdx.json`) |
+| `environment` | yes | Caller environment that holds the signing secrets |
+| `runner` | no | Runner label, default `macos-latest` |
+| `xcode-version` | no | Passed to setup-xcode, default `latest` |
+| `prepare-script` | no | Script inside the checkout to run with `sh` before the build |
+| `build-settings` | no | Extra xcodebuild settings, one `NAME=value` per line |
+| `bundle-identifier` | no | Needed with a provisioning profile |
+| `attest` | no | Default `true`. Off for dry runs: an attestation is a permanent public record |
+| `retention-days` | no | Days the artifact is kept, default 7 |
+
+Secrets: `APPLE_APPLICATION_CERT`, `APPLE_APPLICATION_CERT_PASSWORD`,
+`APPLE_ID`, `APPLE_ID_PASSWORD`, `APPLE_TEAM_ID`, and `PROVISIONING_PROFILE`
+when the app needs one.
+
+Outputs:
+
+| Output | Content |
+| --- | --- |
+| `commit` | Commit that was built |
+| `artifact-name` | Workflow artifact holding every file below |
+| `app-zip-name` | Exported `.app` as a ZIP |
+| `dmg-name`, `dmg-digest` | DMG file name and `sha256:<hex>` |
+| `sbom-name`, `sbom-digest` | SBOM file name and `sha256:<hex>` |
+| `dmg-bundle-name`, `sbom-bundle-name` | Attestation bundles, `<file>.intoto.jsonl`. Empty when `attest` was off |
+
+The caller finishes the release in a job that `needs` the build: check out the
+repository (`sparkle-release` reads a feed on the caller repository through its
+git remote, and `release-notes` reads the changelog), download the artifact,
+unzip the app with `ditto -x -k` into `build/Export`, create the GitHub Release
+with the DMG, the SBOM and the `.sha256` files, run `sparkle-release` on the
+unzipped app, publish its ZIP and appcast as described under Sparkle updates
+repository, and attach the `*.intoto.jsonl` bundles to the release. The app ZIP
+keeps the bundle's symlinks, resource forks and notarization ticket, which a
+plain artifact upload loses.
+
+The workflow pins this repository's own actions by SHA, like a caller does,
+because it checks out the caller and not org-ci. When one of those actions
+changes, bump the pins in the workflow too.
+
 ## Job contract
 
 The build actions in a ship pipeline **must run in the same job** (shared `$RUNNER_TEMP` keychain, exported app, Sparkle env).
