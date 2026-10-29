@@ -249,6 +249,11 @@ gh attestation verify App.dmg --owner <org> \
   --signer-workflow thaw-app/org-ci/.github/workflows/build-macos-app.yml
 ```
 
+The provenance names the commit that triggered the caller, so the workflow
+builds that commit and fails when `ref` resolves to another one. Dispatch a
+release run on its tag, `gh workflow run release.yml --ref 1.2.3`, not on a
+branch with the tag as an input. `ref` can then stay empty.
+
 Call it as a job. The caller's job needs `id-token: write` and
 `attestations: write`; the called workflow asks for nothing more. A `uses:` job
 cannot set an `environment`, so the workflow takes the environment's name as an
@@ -267,8 +272,7 @@ jobs:
       id-token: write
       attestations: write
     with:
-      ref: refs/tags/${{ inputs.tag }}
-      version: ${{ inputs.tag }}
+      version: ${{ github.ref_name }}
       project-name: MyApp.xcodeproj
       target-name: MyApp
       scheme-name: MyApp
@@ -286,8 +290,8 @@ Inputs:
 
 | Input | Required | Purpose |
 | --- | --- | --- |
-| `ref` | yes | Git ref of the caller to build, for example `refs/tags/1.2.3` |
-| `version` | yes | Version the ref carries. Names the SBOM and the artifact |
+| `ref` | no | Ref to build. Empty builds the triggering commit; another ref must name that same commit |
+| `version` | yes | Version being built. Names the SBOM and the artifact |
 | `project-name` | yes | Xcode project relative to the checkout |
 | `target-name` | yes | App target whose Release deployment target is used |
 | `scheme-name` | yes | Scheme to archive |
