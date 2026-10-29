@@ -13,8 +13,7 @@ name: Build macOS app
 # not on a branch with the tag as an input. With attest off, as for a dry run
 # or a development build, any ref builds; the signing secrets are in the job
 # either way, so callers build only refs they trust. The caller downloads the
-# artifact
-# this workflow uploads and finishes the release itself, or calls
+# artifact this workflow uploads and finishes the release itself, or calls
 # release-macos-app.yml to do it.
 
 on:
