@@ -90,6 +90,12 @@ runs:
           exit 1
         fi
 
+        # The destination is a path inside the target checkout and nothing else.
+        if [[ "$DEST_PATH" == /* || "/$DEST_PATH/" == */../* || "/$DEST_PATH/" == */.git/* || "$DEST_PATH" == *$'\n'* ]]; then
+          echo "destination-path must be a relative path without .. or .git components, got: ${DEST_PATH}"
+          exit 1
+        fi
+
         # Distinct work dir per target so two publishes in one job cannot
         # collide on $RUNNER_TEMP.
         slug="$(printf '%s' "${TARGET_REPO}-${TARGET_BRANCH}" | tr -c 'A-Za-z0-9._-' '_')"
@@ -129,8 +135,21 @@ runs:
           git -C "$work" config user.name "github-actions[bot]"
           git -C "$work" config user.email "41898282+github-actions[bot]@users.noreply.github.com"
 
-          mkdir -p "$(dirname "$work/$DEST_PATH")"
-          cp "$SOURCE_PATH" "$work/$DEST_PATH"
+          # The branch decides what is on disk: a symbolic link on the way to
+          # the destination would send the copy outside the checkout.
+          dest="$work/$DEST_PATH"
+          existing="$(dirname "$dest")"
+          while [[ ! -e "$existing" ]]; do
+            existing="$(dirname "$existing")"
+          done
+          work_real="$(cd "$work" && pwd -P)"
+          existing_real="$(cd "$existing" && pwd -P)"
+          if [[ "$existing_real" != "$work_real" && "$existing_real" != "$work_real"/* ]] || [[ -L "$dest" ]]; then
+            echo "destination-path resolves through a symbolic link on ${TARGET_BRANCH}: ${DEST_PATH}"
+            exit 1
+          fi
+          mkdir -p "$(dirname "$dest")"
+          cp "$SOURCE_PATH" "$dest"
 
           paths=("$DEST_PATH")
           if [[ -n "$GITIGNORE_ALLOWLIST" && ! -f "$work/.gitignore" ]]; then

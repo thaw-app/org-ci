@@ -1,9 +1,12 @@
 name: Build macOS app
 
-# Builds, signs, notarizes and attests a macOS app in one job here, away from
-# the calling workflow. The provenance then names this file as the builder,
-# which is what takes a release from SLSA v1.0 Build L2 to Build L3: the
-# caller chooses what to build, not how. Verify a download with
+# Builds, signs and notarizes a macOS app in one job here, away from the
+# calling workflow, then attests the result in a second job that runs none of
+# the app's code. The provenance names this file as the builder, which is what
+# takes a release from SLSA v1.0 Build L2 to Build L3: the caller chooses what
+# to build, not how, and the build phases never see the identity that signs
+# the provenance.
+# Verify a download with
 #
 #   gh attestation verify App.dmg --owner <org> \
 #     --signer-workflow thaw-app/org-ci/.github/workflows/build-macos-app.yml
@@ -95,8 +98,8 @@ on:
         default: ""
       attest:
         description: >-
-          Attest the DMG and the SBOM. Off for dry runs: an attestation is a
-          permanent public record.
+          Attest the DMG and the SBOM in a second job. Off for dry runs: an
+          attestation is a permanent public record.
         required: false
         type: boolean
         default: true
@@ -135,8 +138,11 @@ on:
         description: Version that named the SBOM and the artifact
         value: ${{ jobs.build.outputs.version }}
       artifact-name:
-        description: Workflow artifact holding the DMG, SBOM, checksums, app ZIP and bundles
+        description: Workflow artifact holding the DMG, SBOM, checksums and app ZIP
         value: ${{ jobs.build.outputs.artifact-name }}
+      provenance-artifact-name:
+        description: Workflow artifact holding the attestation bundles, empty when attest was off
+        value: ${{ jobs.attest.outputs.artifact-name }}
       app-zip-name:
         description: File name of the exported app ZIP inside the artifact (unzip with ditto)
         value: ${{ jobs.build.outputs.app-zip-name }}
@@ -148,7 +154,7 @@ on:
         value: ${{ jobs.build.outputs.dmg-digest }}
       dmg-bundle-name:
         description: File name of the DMG attestation bundle, empty when attest was off
-        value: ${{ jobs.build.outputs.dmg-bundle-name }}
+        value: ${{ jobs.attest.outputs.dmg-bundle-name }}
       sbom-name:
         description: File name of the CycloneDX SBOM
         value: ${{ jobs.build.outputs.sbom-name }}
@@ -157,7 +163,7 @@ on:
         value: ${{ jobs.build.outputs.sbom-digest }}
       sbom-bundle-name:
         description: File name of the SBOM attestation bundle, empty when attest was off
-        value: ${{ jobs.build.outputs.sbom-bundle-name }}
+        value: ${{ jobs.attest.outputs.sbom-bundle-name }}
 
 permissions:
   contents: read
@@ -166,22 +172,43 @@ jobs:
   build:
     runs-on: ${{ inputs.runner }}
     environment: ${{ inputs.environment }}
+    # No id-token here: the caller's prepare script and build phases run in
+    # this job, and the identity that signs provenance must stay out of their
+    # reach. The attest job signs what this job uploaded.
     permissions:
       contents: read
-      id-token: write
-      attestations: write
     outputs:
-      commit: ${{ steps.source.outputs.commit }}
+      commit: ${{ steps.commit.outputs.commit }}
       version: ${{ steps.version.outputs.version }}
       artifact-name: ${{ steps.names.outputs.artifact-name }}
       app-zip-name: ${{ steps.names.outputs.app-zip-name }}
       dmg-name: ${{ inputs.dmg-name }}
       dmg-digest: ${{ steps.digests.outputs.dmg-digest }}
-      dmg-bundle-name: ${{ steps.bundles.outputs.dmg-bundle-name }}
       sbom-name: ${{ steps.sbom.outputs.name }}
       sbom-digest: ${{ steps.digests.outputs.sbom-digest }}
-      sbom-bundle-name: ${{ steps.bundles.outputs.sbom-bundle-name }}
     steps:
+      # The names end up in file paths, artifact path lists and attestation
+      # subjects, so they are plain file names and nothing else.
+      - name: Check inputs
+        env:
+          APP_NAME: ${{ inputs.app-name }}
+          DMG_NAME: ${{ inputs.dmg-name }}
+          ASSET_PREFIX: ${{ inputs.asset-prefix }}
+        run: |
+          set -euo pipefail
+          if [[ ! "$APP_NAME" =~ ^[A-Za-z0-9_][A-Za-z0-9._\ -]*\.app$ ]]; then
+            echo "::error::app-name must be a plain bundle name ending in .app, got: ${APP_NAME}"
+            exit 1
+          fi
+          if [[ ! "$DMG_NAME" =~ ^[A-Za-z0-9_][A-Za-z0-9._-]*\.dmg$ ]]; then
+            echo "::error::dmg-name must be a plain file name ending in .dmg, got: ${DMG_NAME}"
+            exit 1
+          fi
+          if [[ ! "$ASSET_PREFIX" =~ ^[A-Za-z0-9._-]+$ ]]; then
+            echo "::error::asset-prefix must be file-name safe, got: ${ASSET_PREFIX}"
+            exit 1
+          fi
+
       # The caller is checked out, not this repository, so the actions below
       # are pinned like a caller pins them.
       - name: Checkout source
@@ -198,24 +225,27 @@ jobs:
       # provenance that names the wrong source, so it stops here. Without an
       # attestation there is no provenance to get wrong.
       - name: Check the built commit is the one the provenance names
-        if: inputs.attest
+        id: commit
         env:
-          BUILT_COMMIT: ${{ steps.source.outputs.commit }}
+          ATTEST: ${{ inputs.attest }}
           RUN_COMMIT: ${{ github.sha }}
           REF: ${{ inputs.ref }}
         run: |
           set -euo pipefail
-          if [[ "$BUILT_COMMIT" != "$RUN_COMMIT" ]]; then
-            echo "::error::ref '${REF}' is ${BUILT_COMMIT}, but this run was triggered from ${RUN_COMMIT}, which is what the provenance would name. Run the caller on the ref to build, for example: gh workflow run release.yml --ref <tag>"
+          # Read from the checkout itself, not from an output another step wrote.
+          built_commit="$(git rev-parse HEAD)"
+          if [[ "$ATTEST" == "true" && "$built_commit" != "$RUN_COMMIT" ]]; then
+            echo "::error::ref '${REF}' is ${built_commit}, but this run was triggered from ${RUN_COMMIT}, which is what the provenance would name. Run the caller on the ref to build, for example: gh workflow run release.yml --ref <tag>"
             exit 1
           fi
-          echo "Building ${BUILT_COMMIT}, the commit this run was triggered from"
+          echo "commit=${built_commit}" >> "$GITHUB_OUTPUT"
+          echo "Building ${built_commit}"
 
       - name: Resolve version
         id: version
         env:
           VERSION: ${{ inputs.version }}
-          COMMIT: ${{ steps.source.outputs.commit }}
+          COMMIT: ${{ steps.commit.outputs.commit }}
         run: |
           set -euo pipefail
           if [[ -z "$VERSION" ]]; then
@@ -232,6 +262,19 @@ jobs:
         uses: maxim-lobanov/setup-xcode@ed7a3b1fda3918c0306d1b724322adc0b8cc0a90 # v1.7.0
         with:
           xcode-version: ${{ inputs.xcode-version }}
+
+      # Before the prepare script: it may put tools on PATH, and this is the
+      # one step that handles the raw signing secrets.
+      - name: Configure signing
+        id: signing
+        uses: thaw-app/org-ci/actions/configure-signing@dedf96e25ba6d24867c18e706b8bd9f6b1fb09d0
+        with:
+          apple-application-cert: ${{ secrets.APPLE_APPLICATION_CERT }}
+          apple-application-cert-password: ${{ secrets.APPLE_APPLICATION_CERT_PASSWORD }}
+          apple-id: ${{ secrets.APPLE_ID }}
+          apple-id-password: ${{ secrets.APPLE_ID_PASSWORD }}
+          apple-team-id: ${{ secrets.APPLE_TEAM_ID }}
+          provisioning-profile: ${{ secrets.PROVISIONING_PROFILE }}
 
       - name: Run prepare script
         if: inputs.prepare-script != ''
@@ -251,17 +294,6 @@ jobs:
           if [[ -d "$HOME/.local/bin" ]]; then
             echo "$HOME/.local/bin" >> "$GITHUB_PATH"
           fi
-
-      - name: Configure signing
-        id: signing
-        uses: thaw-app/org-ci/actions/configure-signing@dedf96e25ba6d24867c18e706b8bd9f6b1fb09d0
-        with:
-          apple-application-cert: ${{ secrets.APPLE_APPLICATION_CERT }}
-          apple-application-cert-password: ${{ secrets.APPLE_APPLICATION_CERT_PASSWORD }}
-          apple-id: ${{ secrets.APPLE_ID }}
-          apple-id-password: ${{ secrets.APPLE_ID_PASSWORD }}
-          apple-team-id: ${{ secrets.APPLE_TEAM_ID }}
-          provisioning-profile: ${{ secrets.PROVISIONING_PROFILE }}
 
       - name: Build
         uses: thaw-app/org-ci/actions/build@dedf96e25ba6d24867c18e706b8bd9f6b1fb09d0
@@ -353,41 +385,6 @@ jobs:
             echo "sbom-digest=sha256:$(awk '{print $1}' "${SBOM_NAME}.sha256")"
           } >> "$GITHUB_OUTPUT"
 
-      - name: Attest DMG
-        id: attest-dmg
-        if: inputs.attest
-        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
-        with:
-          subject-path: build/${{ inputs.dmg-name }}
-
-      - name: Attest SBOM
-        id: attest-sbom
-        if: inputs.attest
-        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
-        with:
-          subject-path: build/${{ steps.sbom.outputs.name }}
-
-      # Named after their subject, so a release carries App.dmg.intoto.jsonl
-      # next to App.dmg.
-      - name: Stage attestation bundles
-        id: bundles
-        if: inputs.attest
-        env:
-          DMG_NAME: ${{ inputs.dmg-name }}
-          SBOM_NAME: ${{ steps.sbom.outputs.name }}
-          DMG_BUNDLE_PATH: ${{ steps.attest-dmg.outputs.bundle-path }}
-          SBOM_BUNDLE_PATH: ${{ steps.attest-sbom.outputs.bundle-path }}
-        run: |
-          set -euo pipefail
-          test -f "$DMG_BUNDLE_PATH"
-          test -f "$SBOM_BUNDLE_PATH"
-          cp "$DMG_BUNDLE_PATH" "build/${DMG_NAME}.intoto.jsonl"
-          cp "$SBOM_BUNDLE_PATH" "build/${SBOM_NAME}.intoto.jsonl"
-          {
-            echo "dmg-bundle-name=${DMG_NAME}.intoto.jsonl"
-            echo "sbom-bundle-name=${SBOM_NAME}.intoto.jsonl"
-          } >> "$GITHUB_OUTPUT"
-
       # ditto keeps the bundle's symlinks and resource forks, which a plain
       # artifact upload would not, so the caller gets back an app that still
       # passes codesign and carries its notarization ticket.
@@ -418,8 +415,91 @@ jobs:
             build/${{ steps.sbom.outputs.name }}
             build/${{ steps.sbom.outputs.name }}.sha256
             build/${{ steps.names.outputs.app-zip-name }}
-            build/*.intoto.jsonl
 
       - name: Cleanup keychain
         if: always()
         run: security delete-keychain "$RUNNER_TEMP/buildagent.keychain" || true
+
+  # Runs none of the app's code: it downloads what the build job uploaded,
+  # checks the files against the digests that job reported, and attests those
+  # digests. This is the only job with the identity that signs provenance.
+  attest:
+    needs: build
+    if: inputs.attest
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
+      attestations: write
+    outputs:
+      artifact-name: ${{ steps.bundles.outputs.artifact-name }}
+      dmg-bundle-name: ${{ steps.bundles.outputs.dmg-bundle-name }}
+      sbom-bundle-name: ${{ steps.bundles.outputs.sbom-bundle-name }}
+    env:
+      DMG_NAME: ${{ needs.build.outputs.dmg-name }}
+      SBOM_NAME: ${{ needs.build.outputs.sbom-name }}
+    steps:
+      - name: Download the build
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: ${{ needs.build.outputs.artifact-name }}
+          path: build
+
+      - name: Check the files against the reported digests
+        env:
+          DMG_DIGEST: ${{ needs.build.outputs.dmg-digest }}
+          SBOM_DIGEST: ${{ needs.build.outputs.sbom-digest }}
+        run: |
+          set -euo pipefail
+          cd build
+          shasum -a 256 -c "${DMG_NAME}.sha256"
+          shasum -a 256 -c "${SBOM_NAME}.sha256"
+          test "sha256:$(shasum -a 256 "$DMG_NAME" | awk '{print $1}')" = "$DMG_DIGEST"
+          test "sha256:$(shasum -a 256 "$SBOM_NAME" | awk '{print $1}')" = "$SBOM_DIGEST"
+
+      # By digest, not by path: the subject is exactly the file checked above,
+      # and a name can never be read as a pattern.
+      - name: Attest DMG
+        id: attest-dmg
+        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
+        with:
+          subject-name: ${{ needs.build.outputs.dmg-name }}
+          subject-digest: ${{ needs.build.outputs.dmg-digest }}
+
+      - name: Attest SBOM
+        id: attest-sbom
+        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
+        with:
+          subject-name: ${{ needs.build.outputs.sbom-name }}
+          subject-digest: ${{ needs.build.outputs.sbom-digest }}
+
+      # Named after their subject, so a release carries App.dmg.intoto.jsonl
+      # next to App.dmg.
+      - name: Stage attestation bundles
+        id: bundles
+        env:
+          ARTIFACT_NAME: ${{ needs.build.outputs.artifact-name }}
+          DMG_BUNDLE_PATH: ${{ steps.attest-dmg.outputs.bundle-path }}
+          SBOM_BUNDLE_PATH: ${{ steps.attest-sbom.outputs.bundle-path }}
+        run: |
+          set -euo pipefail
+          test -f "$DMG_BUNDLE_PATH"
+          test -f "$SBOM_BUNDLE_PATH"
+          mkdir -p provenance
+          cp "$DMG_BUNDLE_PATH" "provenance/${DMG_NAME}.intoto.jsonl"
+          cp "$SBOM_BUNDLE_PATH" "provenance/${SBOM_NAME}.intoto.jsonl"
+          {
+            echo "artifact-name=${ARTIFACT_NAME}-provenance"
+            echo "dmg-bundle-name=${DMG_NAME}.intoto.jsonl"
+            echo "sbom-bundle-name=${SBOM_NAME}.intoto.jsonl"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Upload provenance artifact
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: ${{ steps.bundles.outputs.artifact-name }}
+          if-no-files-found: error
+          retention-days: ${{ inputs.retention-days }}
+          path: |
+            provenance/${{ steps.bundles.outputs.dmg-bundle-name }}
+            provenance/${{ steps.bundles.outputs.sbom-bundle-name }}

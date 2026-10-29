@@ -129,6 +129,17 @@ runs:
       run: |
         set -euo pipefail
 
+        # create-dmg writes the dimensions into AppleScript source it then runs,
+        # and the DMG name into a shell command line.
+        if [[ ! "$WINDOW_WIDTH" =~ ^[1-9][0-9]{1,3}$ || ! "$WINDOW_HEIGHT" =~ ^[1-9][0-9]{1,3}$ ]]; then
+          echo "::error::window-width and window-height must be whole numbers of pixels, got: ${WINDOW_WIDTH} x ${WINDOW_HEIGHT}"
+          exit 1
+        fi
+        if [[ ! "$DMG_NAME" =~ ^[A-Za-z0-9_][A-Za-z0-9._-]*$ ]]; then
+          echo "::error::dmg-name must be a plain file name, got: ${DMG_NAME}"
+          exit 1
+        fi
+
         export_plist="$RUNNER_TEMP/ExportOptions.plist"
         python3 "$GITHUB_ACTION_PATH/write-export-options.py" > "$export_plist"
 

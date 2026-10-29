@@ -21,6 +21,9 @@ def project(target_settings: dict, project_settings: dict) -> dict:
     }
 
 
+KEY_VALUE = "MACOSX_DEPLOYMENT_TARGET"
+
+
 class DeploymentTargetTest(unittest.TestCase):
     def test_the_targets_own_setting_wins(self):
         objects = project({"MACOSX_DEPLOYMENT_TARGET": "27.0"}, {"MACOSX_DEPLOYMENT_TARGET": "26.0"})
@@ -39,6 +42,11 @@ class DeploymentTargetTest(unittest.TestCase):
         objects = project({}, {})
         with self.assertRaises(KeyError):
             resolve.deployment_target(objects, "App")
+
+    def test_a_setting_that_is_not_a_version_is_an_error(self):
+        for value in ("26.0\ncommit=0000", "26.0\n", "$(uname)", 26.0, "26.0 "):
+            with self.assertRaises(ValueError, msg=repr(value)):
+                resolve.deployment_target(project({KEY_VALUE: value}, {}), "App")
 
 
 if __name__ == "__main__":

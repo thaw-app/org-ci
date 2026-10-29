@@ -45,6 +45,32 @@ class SuppressionErrorsTest(unittest.TestCase):
         errors = validate.suppression_errors({"IgnoredVulns": ["GHSA-1"]}, POLICY)
         self.assertEqual(errors, ["IgnoredVulns[1] must be a table"])
 
+    def test_a_package_override_that_ignores_vulnerabilities_needs_both(self):
+        for override in (
+            {"name": "foo", "ecosystem": "npm", "ignore": True},
+            {"name": "foo", "ecosystem": "npm", "vulnerability": {"ignore": True}},
+        ):
+            errors = validate.suppression_errors({"PackageOverrides": [override]}, POLICY)
+            self.assertEqual(len(errors), 2, override)
+            self.assertIn("requires a non-empty reason", errors[0])
+            self.assertIn("requires effectiveUntil", errors[1])
+
+    def test_a_package_override_with_a_reason_and_an_expiry_is_valid(self):
+        config = {
+            "PackageOverrides": [
+                {"name": "foo", "ignore": True, "reason": "dev only", "effectiveUntil": "2027-01-01"}
+            ]
+        }
+        self.assertEqual(validate.suppression_errors(config, POLICY), [])
+
+    def test_a_package_override_that_only_changes_the_license_is_not_a_suppression(self):
+        config = {"PackageOverrides": [{"name": "foo", "license": {"override": ["MIT"]}}]}
+        self.assertEqual(validate.suppression_errors(config, POLICY), [])
+
+    def test_a_package_override_that_is_not_a_table_is_reported(self):
+        errors = validate.suppression_errors({"PackageOverrides": ["foo"]}, POLICY)
+        self.assertEqual(errors, ["PackageOverrides[1] must be a table"])
+
 
 if __name__ == "__main__":
     unittest.main()

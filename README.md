@@ -230,11 +230,16 @@ be older than the workflow's own local actions, so the action sets
 ### Building a release
 
 `.github/workflows/build-macos-app.yml` builds, signs, notarizes and attests a
-macOS app in one job of its own. It runs `checkout-source`, `configure-signing`,
-`build`, `export-and-package` and `notarize-and-validate`, then generates a
-CycloneDX SBOM with a pinned syft, writes sha256 checksums, attests the DMG and
-the SBOM, zips the exported `.app` with `ditto` and uploads everything as one
-workflow artifact.
+macOS app in two jobs of its own. The build job runs `checkout-source`,
+`configure-signing`, `build`, `export-and-package` and `notarize-and-validate`,
+then generates a CycloneDX SBOM with a pinned syft, writes sha256 checksums,
+zips the exported `.app` with `ditto` and uploads everything as one workflow
+artifact. The attest job downloads that artifact, checks the files against the
+digests the build job reported, attests the DMG and the SBOM by digest and
+uploads the bundles as a second artifact. It is the only job with the
+`id-token` permission: the app's prepare script and build phases run in the
+build job and never see the identity that signs the provenance, which is what
+SLSA Build L3 asks of a builder.
 
 It exists for SLSA Build L3. When a caller runs the actions in its own job, the
 caller's workflow is the builder named in the provenance, and GitHub grants
@@ -300,16 +305,16 @@ Inputs:
 | `project-name` | yes | Xcode project relative to the checkout |
 | `target-name` | yes | App target whose Release deployment target is used |
 | `scheme-name` | yes | Scheme to archive |
-| `app-name` | yes | Name of the `.app` bundle |
-| `dmg-name` | yes | Name of the DMG to produce |
-| `asset-prefix` | yes | Prefix of the SBOM file name (`Prefix_version.cdx.json`) |
+| `app-name` | yes | Name of the `.app` bundle: letters, digits, `._ -`, ending in `.app` |
+| `dmg-name` | yes | Name of the DMG to produce: letters, digits, `._-`, ending in `.dmg` |
+| `asset-prefix` | yes | Prefix of the SBOM file name (`Prefix_version.cdx.json`): letters, digits, `._-` |
 | `environment` | yes | Caller environment that holds the signing secrets |
 | `runner` | no | Runner label, default `macos-latest` |
 | `xcode-version` | no | Passed to setup-xcode, default `latest` |
 | `prepare-script` | no | Script inside the checkout to run with `sh` before the build |
 | `build-settings` | no | Extra xcodebuild settings, one `NAME=value` per line |
 | `bundle-identifier` | no | Needed with a provisioning profile |
-| `attest` | no | Default `true`. Off for dry runs: an attestation is a permanent public record |
+| `attest` | no | Default `true`. Off for dry runs: an attestation is a permanent public record. Off also skips the attest job and the triggering-commit check |
 | `retention-days` | no | Days the artifact is kept, default 7 |
 
 Secrets: `APPLE_APPLICATION_CERT`, `APPLE_APPLICATION_CERT_PASSWORD`,
@@ -322,10 +327,11 @@ Outputs:
 | --- | --- |
 | `commit` | Commit that was built |
 | `version` | Version that named the SBOM and the artifact |
-| `artifact-name` | Workflow artifact holding every file below |
+| `artifact-name` | Workflow artifact holding the DMG, the SBOM, their `.sha256` files and the app ZIP |
 | `app-zip-name` | Exported `.app` as a ZIP |
 | `dmg-name`, `dmg-digest` | DMG file name and `sha256:<hex>` |
 | `sbom-name`, `sbom-digest` | SBOM file name and `sha256:<hex>` |
+| `provenance-artifact-name` | Workflow artifact holding the attestation bundles. Empty when `attest` was off |
 | `dmg-bundle-name`, `sbom-bundle-name` | Attestation bundles, `<file>.intoto.jsonl`. Empty when `attest` was off |
 
 The caller finishes the release in a job that `needs` the build, either with
@@ -343,10 +349,10 @@ changes, bump the pins in the workflows too.
 
 ### Publishing a release
 
-`.github/workflows/release-macos-app.yml` takes the artifact of
-`build-macos-app.yml` and publishes it. In one macOS job it checks out the
+`.github/workflows/release-macos-app.yml` takes the artifacts of
+`build-macos-app.yml` and publishes them. In one macOS job it checks out the
 caller at the tag, resolves the release notes with `release-notes`, downloads
-the build, restores the app with `ditto`, checks its signature, its stapled
+the build and the provenance, restores the app with `ditto`, checks its signature, its stapled
 ticket and both attested digests, runs `sparkle-release` for the ZIP, the
 deltas and the signed appcast, signs the DMG and the SBOM with cosign, creates
 the GitHub Release as a draft with every file and the attestation bundles, and
@@ -378,6 +384,7 @@ jobs:
       asset-prefix: MyApp
       commit: ${{ needs.build.outputs.commit }}
       build-artifact: ${{ needs.build.outputs.artifact-name }}
+      provenance-artifact: ${{ needs.build.outputs.provenance-artifact-name }}
       app-zip-name: ${{ needs.build.outputs.app-zip-name }}
       dmg-name: ${{ needs.build.outputs.dmg-name }}
       dmg-digest: ${{ needs.build.outputs.dmg-digest }}
@@ -408,7 +415,7 @@ Inputs:
 | `asset-prefix` | yes | Prefix of the Sparkle ZIP and the SBOM |
 | `appcast-title` | no | Title of a new appcast; empty uses `asset-prefix` |
 | `commit`, `build-artifact`, `app-zip-name`, `dmg-name`, `dmg-digest`, `sbom-name`, `sbom-digest` | yes | The build workflow's outputs of the same names; the tag must name `commit` |
-| `dmg-bundle-name`, `sbom-bundle-name` | no | The build's attestation bundles; required unless `dry-run` |
+| `provenance-artifact`, `dmg-bundle-name`, `sbom-bundle-name` | no | The build's provenance artifact and bundle names; required unless `dry-run` |
 | `release-notes` | no | Notes override; empty reads the changelog, and GitHub generates them when it has no section for the tag |
 | `changelog-paths` | no | Changelog files to look in, one per line, default `CHANGELOG.md` |
 | `sparkle` | no | Default `true`. Off ships the DMG alone |

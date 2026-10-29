@@ -11,6 +11,13 @@ import sys
 import tomllib
 
 
+def _suppresses_vulnerabilities(entry: dict) -> bool:
+    vulnerability = entry.get("vulnerability")
+    return entry.get("ignore") is True or (
+        isinstance(vulnerability, dict) and vulnerability.get("ignore") is True
+    )
+
+
 def suppression_errors(config: dict, policy_url: str) -> list[str]:
     errors: list[str] = []
     for i, entry in enumerate(config.get("IgnoredVulns") or [], start=1):
@@ -32,6 +39,29 @@ def suppression_errors(config: dict, policy_url: str) -> list[str]:
                 f"IgnoredVulns id={vuln_id!r} requires ignoreUntil "
                 f"(YYYY-MM-DD expiry; see {policy_url})"
             )
+    # A package override that ignores vulnerabilities is a suppression as well,
+    # with the scanner's own field names.
+    for i, entry in enumerate(config.get("PackageOverrides") or [], start=1):
+        if not isinstance(entry, dict):
+            errors.append(f"PackageOverrides[{i}] must be a table")
+            continue
+        if not _suppresses_vulnerabilities(entry):
+            continue
+        name = entry.get("name") or f"#{i}"
+        reason = entry.get("reason")
+        if not isinstance(reason, str) or not reason.strip():
+            errors.append(
+                f"PackageOverrides name={name!r} that ignores vulnerabilities "
+                f"requires a non-empty reason (see {policy_url})"
+            )
+        effective_until = entry.get("effectiveUntil")
+        if effective_until is None or (
+            isinstance(effective_until, str) and not effective_until.strip()
+        ):
+            errors.append(
+                f"PackageOverrides name={name!r} that ignores vulnerabilities "
+                f"requires effectiveUntil (YYYY-MM-DD expiry; see {policy_url})"
+            )
     return errors
 
 
@@ -44,7 +74,14 @@ def main(argv: list[str]) -> int:
     if errors:
         return 1
 
-    print(f"Validated {len(config.get('IgnoredVulns') or [])} IgnoredVulns suppression(s)")
+    overrides = [
+        e for e in config.get("PackageOverrides") or []
+        if isinstance(e, dict) and _suppresses_vulnerabilities(e)
+    ]
+    print(
+        f"Validated {len(config.get('IgnoredVulns') or [])} IgnoredVulns suppression(s) "
+        f"and {len(overrides)} PackageOverrides that ignore vulnerabilities"
+    )
     return 0
 
 

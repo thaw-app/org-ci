@@ -147,6 +147,12 @@ runs:
       run: |
         set -euo pipefail
 
+        # Both name release assets and appear in the appcast rewrite below.
+        if [[ ! "$ASSET_PREFIX" =~ ^[A-Za-z0-9._-]+$ || ! "$TAG" =~ ^[A-Za-z0-9._-]+$ ]]; then
+          echo "::error::asset-prefix and tag must be file-name safe, got: ${ASSET_PREFIX}_${TAG}"
+          exit 1
+        fi
+
         app_path="$EXPORT_PATH/$APP_NAME"
         if [[ ! -d "$app_path" ]]; then
           echo "Missing exported app at $app_path"
@@ -431,9 +437,15 @@ runs:
         "$SPARKLE_BIN/generate_appcast" "${args[@]}" "$SPARKLE_ARCHIVES"
 
         # generate_appcast applies one --download-url-prefix to every archive;
-        # rewrite each Prefix_<tag>.zip to resolve under its own tag.
+        # rewrite each Prefix_<tag>.zip to resolve under its own tag. The Perl
+        # program is a constant: the values come in through the environment
+        # and are quoted by \Q...\E, never pasted into the source.
+        if [[ ! "$DOWNLOAD_REPO" =~ ^[A-Za-z0-9._-]+/[A-Za-z0-9._-]+$ ]]; then
+          echo "::error::updates-repository must be owner/name, got: ${DOWNLOAD_REPO}"
+          exit 1
+        fi
         perl -i -pe \
-          's#(url="https://github.com/\Q'"$DOWNLOAD_REPO"'\E/releases/download/)[^/]+/(\Q'"$ASSET_PREFIX"'\E_([^"]+)\.zip")#$1$3/$2#g' \
+          's#(url="https://github.com/\Q$ENV{DOWNLOAD_REPO}\E/releases/download/)[^/]+/(\Q$ENV{ASSET_PREFIX}\E_([^"]+)\.zip")#$1$3/$2#g' \
           "$SPARKLE_PAGES/appcast.xml"
 
         # Includes prior-release deltas.

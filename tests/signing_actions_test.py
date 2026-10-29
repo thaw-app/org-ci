@@ -45,6 +45,10 @@ class SigningActionsTests(unittest.TestCase):
             "BUILD_SETTINGS": "",
             "PROFILE_NAME": "",
             "BUNDLE_IDENTIFIER": "",
+            "APP_NAME": "App.app",
+            "DMG_NAME": "App.dmg",
+            "WINDOW_WIDTH": "582",
+            "WINDOW_HEIGHT": "300",
         }
 
     def run_step(self, action, name, stub, **inputs):
