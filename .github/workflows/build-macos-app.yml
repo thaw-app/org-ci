@@ -9,9 +9,13 @@ name: Build macOS app
 #     --signer-workflow thaw-app/org-ci/.github/workflows/build-macos-app.yml
 #
 # The provenance names the commit that triggered the caller, so that is the
-# commit this workflow builds: dispatch a release on its tag, not on a branch
-# with the tag as an input. The caller downloads the artifact this workflow
-# uploads, publishes the release and attaches the attestation bundles itself.
+# commit this workflow builds when it attests: dispatch a release on its tag,
+# not on a branch with the tag as an input. With attest off, as for a dry run
+# or a development build, any ref builds; the signing secrets are in the job
+# either way, so callers build only refs they trust. The caller downloads the
+# artifact
+# this workflow uploads and finishes the release itself, or calls
+# release-macos-app.yml to do it.
 
 on:
   workflow_call:
@@ -19,16 +23,19 @@ on:
       ref:
         description: >-
           Git ref of the caller to build. Empty builds the commit that
-          triggered the caller. Another ref is accepted only when it names
-          that same commit, such as the tag the run was dispatched on, because
-          the provenance records the triggering commit.
+          triggered the caller. With attest on, another ref is accepted only
+          when it names that same commit, such as the tag the run was
+          dispatched on, because the provenance records the triggering commit.
         required: false
         type: string
         default: ""
       version:
-        description: Version the ref carries, for example 1.2.3. Names the SBOM and the artifact.
-        required: true
+        description: >-
+          Version the ref carries, for example 1.2.3. Names the SBOM and the
+          artifact. Empty names them after the built commit, dev-<short sha>.
+        required: false
         type: string
+        default: ""
       project-name:
         description: Xcode project relative to the checkout, for example App.xcodeproj
         required: true
@@ -125,6 +132,9 @@ on:
       commit:
         description: Commit that was built
         value: ${{ jobs.build.outputs.commit }}
+      version:
+        description: Version that named the SBOM and the artifact
+        value: ${{ jobs.build.outputs.version }}
       artifact-name:
         description: Workflow artifact holding the DMG, SBOM, checksums, app ZIP and bundles
         value: ${{ jobs.build.outputs.artifact-name }}
@@ -163,6 +173,7 @@ jobs:
       attestations: write
     outputs:
       commit: ${{ steps.source.outputs.commit }}
+      version: ${{ steps.version.outputs.version }}
       artifact-name: ${{ steps.names.outputs.artifact-name }}
       app-zip-name: ${{ steps.names.outputs.app-zip-name }}
       dmg-name: ${{ inputs.dmg-name }}
@@ -185,8 +196,10 @@ jobs:
 
       # actions/attest-build-provenance records the triggering commit as the
       # source, whatever was checked out. A build of another commit would carry
-      # provenance that names the wrong source, so it stops here.
+      # provenance that names the wrong source, so it stops here. Without an
+      # attestation there is no provenance to get wrong.
       - name: Check the built commit is the one the provenance names
+        if: inputs.attest
         env:
           BUILT_COMMIT: ${{ steps.source.outputs.commit }}
           RUN_COMMIT: ${{ github.sha }}
@@ -198,6 +211,23 @@ jobs:
             exit 1
           fi
           echo "Building ${BUILT_COMMIT}, the commit this run was triggered from"
+
+      - name: Resolve version
+        id: version
+        env:
+          VERSION: ${{ inputs.version }}
+          COMMIT: ${{ steps.source.outputs.commit }}
+        run: |
+          set -euo pipefail
+          if [[ -z "$VERSION" ]]; then
+            VERSION="dev-${COMMIT:0:7}"
+          fi
+          if [[ ! "$VERSION" =~ ^[A-Za-z0-9._-]+$ ]]; then
+            echo "::error::version must be file-name safe, got: ${VERSION}"
+            exit 1
+          fi
+          echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
+          echo "Version ${VERSION}"
 
       - name: Select Xcode
         uses: maxim-lobanov/setup-xcode@ed7a3b1fda3918c0306d1b724322adc0b8cc0a90 # v1.7.0
@@ -262,7 +292,7 @@ jobs:
         id: sbom
         env:
           ASSET_PREFIX: ${{ inputs.asset-prefix }}
-          VERSION: ${{ inputs.version }}
+          VERSION: ${{ steps.version.outputs.version }}
           # Syft pinned by version and archive digest; bump both from the
           # release's syft_<version>_checksums.txt.
           SYFT_VERSION: 1.42.3
@@ -270,8 +300,8 @@ jobs:
           SYFT_SHA256_DARWIN_AMD64: c00d01b7c43504708c8922d643d1cbaefa62ca8876baa4d2c2cf4c3be43707a9
         run: |
           set -euo pipefail
-          if [[ ! "$ASSET_PREFIX" =~ ^[A-Za-z0-9._-]+$ || ! "$VERSION" =~ ^[A-Za-z0-9._-]+$ ]]; then
-            echo "::error::asset-prefix and version must be file-name safe, got: ${ASSET_PREFIX}_${VERSION}"
+          if [[ ! "$ASSET_PREFIX" =~ ^[A-Za-z0-9._-]+$ ]]; then
+            echo "::error::asset-prefix must be file-name safe, got: ${ASSET_PREFIX}"
             exit 1
           fi
 
@@ -366,7 +396,7 @@ jobs:
         id: names
         env:
           APP_NAME: ${{ inputs.app-name }}
-          VERSION: ${{ inputs.version }}
+          VERSION: ${{ steps.version.outputs.version }}
         run: |
           set -euo pipefail
           zip_name="${APP_NAME}.zip"
