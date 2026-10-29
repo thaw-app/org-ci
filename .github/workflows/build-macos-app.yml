@@ -8,16 +8,23 @@ name: Build macOS app
 #   gh attestation verify App.dmg --owner <org> \
 #     --signer-workflow thaw-app/org-ci/.github/workflows/build-macos-app.yml
 #
-# The caller downloads the artifact this workflow uploads, publishes the
-# release and attaches the attestation bundles itself.
+# The provenance names the commit that triggered the caller, so that is the
+# commit this workflow builds: dispatch a release on its tag, not on a branch
+# with the tag as an input. The caller downloads the artifact this workflow
+# uploads, publishes the release and attaches the attestation bundles itself.
 
 on:
   workflow_call:
     inputs:
       ref:
-        description: Git ref of the caller to build, for example refs/tags/1.2.3
-        required: true
+        description: >-
+          Git ref of the caller to build. Empty builds the commit that
+          triggered the caller. Another ref is accepted only when it names
+          that same commit, such as the tag the run was dispatched on, because
+          the provenance records the triggering commit.
+        required: false
         type: string
+        default: ""
       version:
         description: Version the ref carries, for example 1.2.3. Names the SBOM and the artifact.
         required: true
@@ -175,6 +182,22 @@ jobs:
           target-name: ${{ inputs.target-name }}
           ref: ${{ inputs.ref }}
           local-actions-path: ""
+
+      # actions/attest-build-provenance records the triggering commit as the
+      # source, whatever was checked out. A build of another commit would carry
+      # provenance that names the wrong source, so it stops here.
+      - name: Check the built commit is the one the provenance names
+        env:
+          BUILT_COMMIT: ${{ steps.source.outputs.commit }}
+          RUN_COMMIT: ${{ github.sha }}
+          REF: ${{ inputs.ref }}
+        run: |
+          set -euo pipefail
+          if [[ "$BUILT_COMMIT" != "$RUN_COMMIT" ]]; then
+            echo "::error::ref '${REF}' is ${BUILT_COMMIT}, but this run was triggered from ${RUN_COMMIT}, which is what the provenance would name. Run the caller on the ref to build, for example: gh workflow run release.yml --ref <tag>"
+            exit 1
+          fi
+          echo "Building ${BUILT_COMMIT}, the commit this run was triggered from"
 
       - name: Select Xcode
         uses: maxim-lobanov/setup-xcode@ed7a3b1fda3918c0306d1b724322adc0b8cc0a90 # v1.7.0
