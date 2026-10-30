@@ -305,8 +305,8 @@ Inputs:
 | `project-name` | yes | Xcode project relative to the checkout |
 | `target-name` | yes | App target whose Release deployment target is used |
 | `scheme-name` | yes | Scheme to archive |
-| `app-name` | yes | Name of the `.app` bundle: letters, digits, `._ -`, ending in `.app` |
-| `dmg-name` | yes | Name of the DMG to produce: letters, digits, `._-`, ending in `.dmg` |
+| `app-name` | yes | Name of the `.app` bundle: letters, digits, `._ -`, starting with a letter, digit or `_` and ending in `.app` |
+| `dmg-name` | yes | Name of the DMG to produce: letters, digits, `._-`, starting with a letter, digit or `_` and ending in `.dmg` |
 | `asset-prefix` | yes | Prefix of the SBOM file name (`Prefix_version.cdx.json`): letters, digits, `._-` |
 | `environment` | yes | Caller environment that holds the signing secrets |
 | `runner` | no | Runner label, default `macos-latest` |
@@ -336,12 +336,14 @@ Outputs:
 
 The caller finishes the release in a job that `needs` the build, either with
 `release-macos-app.yml` below or with its own steps: check out the repository,
-download the artifact, unzip the app with `ditto -x -k` into `build/Export`,
-create the GitHub Release with the DMG, the SBOM and the `.sha256` files, run
-`sparkle-release` on the unzipped app, publish its ZIP and appcast as described
-under Sparkle updates repository, and attach the `*.intoto.jsonl` bundles to the
-release. The app ZIP keeps the bundle's symlinks, resource forks and
-notarization ticket, which a plain artifact upload loses.
+download the build artifact and the provenance artifact, unzip the app with
+`ditto -x -k` into `build/Export`, sign the DMG and the SBOM with
+`cosign sign-blob --bundle <file>.sigstore.json`, create the GitHub Release with
+the DMG, the SBOM, the `.sha256` files, the `.sigstore.json` signatures and the
+`*.intoto.jsonl` bundles, then run `sparkle-release` on the unzipped app and
+publish its ZIP and appcast as described under Sparkle updates repository. The
+app ZIP keeps the bundle's symlinks, resource forks and notarization ticket,
+which a plain artifact upload loses.
 
 Both workflows pin this repository's own actions by SHA, like a caller does,
 because they check out the caller and not org-ci. When one of those actions
@@ -353,15 +355,19 @@ changes, bump the pins in the workflows too.
 `build-macos-app.yml` and publishes them. In one macOS job it checks out the
 caller at the tag, resolves the release notes with `release-notes`, downloads
 the build and the provenance, restores the app with `ditto`, checks its signature, its stapled
-ticket and both attested digests, runs `sparkle-release` for the ZIP, the
-deltas and the signed appcast, signs the DMG and the SBOM with cosign, creates
-the GitHub Release as a draft with every file and the attestation bundles, and
-when asked publishes the release and pushes the appcast. A dry run produces
-every file and writes a report to the job summary instead.
+ticket, both attested digests and the attestation bundles (`gh attestation
+verify`, against the caller's repository and the build workflow), runs
+`sparkle-release` for the ZIP, the deltas and the signed appcast, signs the DMG
+and the SBOM with cosign, creates the GitHub Release as a draft with every file
+and the attestation bundles, and when asked publishes the release and pushes
+the appcast. A dry run produces every file except the signatures and the
+provenance bundles, and writes a report to the job summary instead.
 
-The order is fixed so that nothing is public until the end: an unknown
-discussion category, a missing bundle or a failed Sparkle step stops the run
-while both releases are still drafts. The caller's release is published first,
+The order is fixed so that no release and no feed is public until the end: an
+unknown discussion category, a missing bundle or a failed Sparkle step stops the
+run while both releases are still drafts. Signing is not covered: cosign writes
+to the public Rekor log before anything is published, and that entry stays when
+the run fails afterwards. The caller's release is published first,
 then the updates release, then the appcast, so no feed item names a ZIP that is
 not there yet. A tag whose release is already published is refused, and so is a
 tag that names another commit than the one the build job built. One exception:
@@ -369,6 +375,14 @@ when a run published the caller's release and then failed before the updates
 release, re-running it with the same build (the published DMG checksum must
 match) skips the caller's release and publishes the updates release and the
 appcast. An updates release that is already published is always refused.
+
+That leaves a run that failed on the appcast push after both releases went
+public. Re-running it is refused, because a new run makes a new Sparkle ZIP that
+the published one would not match. Recover by hand instead: the failed run keeps
+the appcast it made as the `appcast-<tag>` artifact (and the legacy appcast, when
+there is one). Download it with `gh run download <run-id> -n appcast-<tag>`, then
+commit it as `appcast.xml` to the appcast branch, or push it with
+`publish-file-to-branch`.
 
 ```yaml
 jobs:
@@ -443,12 +457,13 @@ Secrets, matched by name through `secrets: inherit`:
 used for the caller's release and branches, so the calling job needs
 `contents: write`, and `id-token: write` for cosign's keyless signing.
 
-The cosign signature names this workflow as the signer. Verify a release asset
-with the caller's repository as a constraint:
+The cosign signature names this workflow, at the revision the caller pinned, as
+the signer. Verify a release asset against that revision and the caller's
+repository:
 
 ```sh
 cosign verify-blob --bundle App.dmg.sigstore.json \
-  --certificate-identity-regexp '^https://github\.com/thaw-app/org-ci/\.github/workflows/release-macos-app\.yml@' \
+  --certificate-identity 'https://github.com/thaw-app/org-ci/.github/workflows/release-macos-app.yml@<sha>' \
   --certificate-oidc-issuer https://token.actions.githubusercontent.com \
   --certificate-github-workflow-repository <owner>/<repo> \
   App.dmg

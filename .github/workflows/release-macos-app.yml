@@ -9,8 +9,9 @@ name: Release macOS app
 # The release is a draft until the last step, and the appcast goes out after
 # it, so a failure on the way leaves nothing public and no feed item names a
 # file that is not there yet. A run that failed after publishing the caller's
-# release can be re-run with the same build to publish the rest. A dry run produces every file and reports on it,
-# and publishes, signs and pushes nothing.
+# release can be re-run with the same build to publish the rest. A dry run
+# produces every file but the signatures and provenance bundles, reports on
+# them, and publishes, signs and pushes nothing.
 
 on:
   workflow_call:
@@ -266,6 +267,8 @@ jobs:
           }
 
           # Its ZIP is an appcast enclosure; a new one would not match the old feed.
+          # So a run that failed on the appcast after both releases went public
+          # is not resumed: push the appcast-<tag> artifact it kept by hand.
           if [[ -n "$UPDATES_REPO" ]]; then
             release_state "$UPDATES_REPO" "$UPDATES_TOKEN"
             if [[ "$state" == published ]]; then
@@ -357,6 +360,8 @@ jobs:
           DMG_BUNDLE: ${{ inputs.dmg-bundle-name }}
           SBOM_BUNDLE: ${{ inputs.sbom-bundle-name }}
           DRY_RUN: ${{ inputs.dry-run }}
+          GH_TOKEN: ${{ github.token }}
+          SIGNER_WORKFLOW: thaw-app/org-ci/.github/workflows/build-macos-app.yml
         run: |
           set -euo pipefail
           ls -la build
@@ -375,8 +380,12 @@ jobs:
               echo "::error::The build carries no attestation bundles. Build with attest on, or run a dry run."
               exit 1
             fi
-            test -f "build/${DMG_BUNDLE}"
-            test -f "build/${SBOM_BUNDLE}"
+            # The bundles go on the release, so they have to be for these files,
+            # built from this repository by the build workflow.
+            gh attestation verify "build/${DMG_NAME}" --bundle "build/${DMG_BUNDLE}" \
+              --repo "$GITHUB_REPOSITORY" --signer-workflow "$SIGNER_WORKFLOW"
+            gh attestation verify "$SBOM_PATH" --bundle "build/${SBOM_BUNDLE}" \
+              --repo "$GITHUB_REPOSITORY" --signer-workflow "$SIGNER_WORKFLOW"
           fi
 
       # generate_appcast drops the notes of prior archives it re-reads for
@@ -657,6 +666,18 @@ jobs:
           token: ${{ secrets.LEGACY_APPCAST_TOKEN }}
           commit-message: "chore(sparkle): mirror appcast for ${{ inputs.tag }} (${{ inputs.channel }})"
           max-attempts: "3"
+
+      # A re-run cannot make an appcast that matches a published updates
+      # release, so a failed run keeps the one it made for a push by hand.
+      - name: Keep the appcast
+        if: ${{ failure() && !inputs.dry-run && steps.appcast.outputs.appcast-path != '' }}
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: appcast-${{ inputs.tag }}
+          retention-days: 30
+          path: |
+            ${{ steps.appcast.outputs.appcast-path }}
+            ${{ steps.appcast.outputs.legacy-appcast-path }}
 
       - name: Dry run report
         if: inputs.dry-run
