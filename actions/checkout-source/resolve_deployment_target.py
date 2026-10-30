@@ -11,7 +11,7 @@ import sys
 
 KEY = "MACOSX_DEPLOYMENT_TARGET"
 # A version such as 26.0: the value ends up on one line of GITHUB_OUTPUT.
-VERSION = re.compile(r"^[0-9]+(\.[0-9]+)*$")
+VERSION = re.compile(r"^\d+(\.\d+)*$", re.ASCII)
 
 
 def deployment_target(objects: dict, target_name: str) -> str:

@@ -45,8 +45,9 @@ class DeploymentTargetTest(unittest.TestCase):
 
     def test_a_setting_that_is_not_a_version_is_an_error(self):
         for value in ("26.0\ncommit=0000", "26.0\n", "$(uname)", 26.0, "26.0 "):
+            objects = project({KEY_VALUE: value}, {})
             with self.assertRaises(ValueError, msg=repr(value)):
-                resolve.deployment_target(project({KEY_VALUE: value}, {}), "App")
+                resolve.deployment_target(objects, "App")
 
 
 if __name__ == "__main__":

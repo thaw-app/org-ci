@@ -51,8 +51,7 @@ def _tables(config: dict, key: str, errors: list[str]) -> list:
     return _field(config, key, "The config", errors) or []
 
 
-def suppression_errors(config: dict, policy_url: str) -> list[str]:
-    errors: list[str] = []
+def _ignored_vuln_errors(config: dict, policy_url: str, errors: list[str]) -> None:
     for i, entry in enumerate(_tables(config, "IgnoredVulns", errors), start=1):
         where = f"IgnoredVulns[{i}]"
         if not isinstance(entry, dict):
@@ -70,8 +69,11 @@ def suppression_errors(config: dict, policy_url: str) -> list[str]:
                 f"IgnoredVulns id={vuln_id!r} requires ignoreUntil "
                 f"(YYYY-MM-DD expiry; see {policy_url})"
             )
-    # A package override that ignores vulnerabilities is a suppression as well,
-    # with the scanner's own field names.
+
+
+# A package override that ignores vulnerabilities is a suppression as well,
+# with the scanner's own field names.
+def _package_override_errors(config: dict, policy_url: str, errors: list[str]) -> None:
     for i, entry in enumerate(_tables(config, "PackageOverrides", errors), start=1):
         where = f"PackageOverrides[{i}]"
         if not isinstance(entry, dict):
@@ -91,6 +93,12 @@ def suppression_errors(config: dict, policy_url: str) -> list[str]:
                 f"PackageOverrides name={name!r} that ignores vulnerabilities "
                 f"requires effectiveUntil (YYYY-MM-DD expiry; see {policy_url})"
             )
+
+
+def suppression_errors(config: dict, policy_url: str) -> list[str]:
+    errors: list[str] = []
+    _ignored_vuln_errors(config, policy_url, errors)
+    _package_override_errors(config, policy_url, errors)
     return errors
 
 
