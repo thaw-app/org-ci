@@ -29,9 +29,8 @@ fi
 
 # A range that cannot be compared must not read as "nothing changed". Renames
 # are listed as a removal and an addition, so a code file moved out still counts.
-# Git quotes and escapes an unusual path on a line-based listing, and a quoted
-# path would never match an anchored pattern, so the paths come NUL-separated
-# and are matched one record at a time.
+# Git quotes unusual paths in a line-based listing, and a quoted path never
+# matches an anchored pattern, so the paths come NUL-separated.
 changed="$(mktemp)"
 trap 'rm -f "$changed"' EXIT
 if ! git diff --name-only --no-renames -z "$range" > "$changed"; then

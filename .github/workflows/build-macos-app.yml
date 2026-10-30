@@ -172,9 +172,8 @@ jobs:
   build:
     runs-on: ${{ inputs.runner }}
     environment: ${{ inputs.environment }}
-    # No id-token here: the caller's prepare script and build phases run in
-    # this job, and the identity that signs provenance must stay out of their
-    # reach. The attest job signs what this job uploaded.
+    # No id-token here: the prepare script and build phases run in this job
+    # and must not reach the identity that signs provenance.
     permissions:
       contents: read
     outputs:
@@ -188,7 +187,7 @@ jobs:
       sbom-digest: ${{ steps.digests.outputs.sbom-digest }}
     steps:
       # The names end up in file paths, artifact path lists and attestation
-      # subjects, so they are plain file names and nothing else.
+      # subjects, so they must be plain file names.
       - name: Check inputs
         env:
           APP_NAME: ${{ inputs.app-name }}
@@ -220,10 +219,8 @@ jobs:
           ref: ${{ inputs.ref }}
           local-actions-path: ""
 
-      # actions/attest-build-provenance records the triggering commit as the
-      # source, whatever was checked out. A build of another commit would carry
-      # provenance that names the wrong source, so it stops here. Without an
-      # attestation there is no provenance to get wrong.
+      # attest-build-provenance names the triggering commit as the source whatever
+      # was checked out, so an attested build of another commit stops here.
       - name: Check the built commit is the one the provenance names
         id: commit
         env:
@@ -420,9 +417,8 @@ jobs:
         if: always()
         run: security delete-keychain "$RUNNER_TEMP/buildagent.keychain" || true
 
-  # Runs none of the app's code: it downloads what the build job uploaded,
-  # checks the files against the digests that job reported, and attests those
-  # digests. This is the only job with the identity that signs provenance.
+  # The only job with the identity that signs provenance. It runs none of the
+  # app's code and attests the digests the build job reported.
   attest:
     needs: build
     if: inputs.attest

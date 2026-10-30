@@ -85,10 +85,8 @@ runs:
         if [[ -d "$aside" ]]; then
           actions_dir="$GITHUB_WORKSPACE/$LOCAL_ACTIONS"
           parent="$(dirname "$actions_dir")"
-          # The checkout decides what is on disk now. A symbolic link in the
-          # path would send rm -rf and cp outside the workspace, so the
-          # nearest existing ancestor has to resolve inside it, and the
-          # directory itself must not be a link.
+          # A symbolic link would send rm -rf and cp outside the workspace, so the
+          # nearest existing ancestor must resolve inside it and the path must not be a link.
           existing="$parent"
           while [[ ! -e "$existing" ]]; do
             existing="$(dirname "$existing")"

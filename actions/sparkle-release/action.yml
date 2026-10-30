@@ -436,10 +436,8 @@ runs:
 
         "$SPARKLE_BIN/generate_appcast" "${args[@]}" "$SPARKLE_ARCHIVES"
 
-        # generate_appcast applies one --download-url-prefix to every archive;
-        # rewrite each Prefix_<tag>.zip to resolve under its own tag. The Perl
-        # program is a constant: the values come in through the environment
-        # and are quoted by \Q...\E, never pasted into the source.
+        # generate_appcast gives every archive one URL prefix; point each Prefix_<tag>.zip
+        # at its own tag. The Perl is constant; values arrive via env, quoted by \Q...\E.
         if [[ ! "$DOWNLOAD_REPO" =~ ^[A-Za-z0-9._-]+/[A-Za-z0-9._-]+$ ]]; then
           echo "::error::updates-repository must be owner/name, got: ${DOWNLOAD_REPO}"
           exit 1

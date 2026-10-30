@@ -1,5 +1,11 @@
 # org-ci
 
+<p>
+  <a href="https://github.com/thaw-app/org-ci/actions/workflows/test-actions.yml?query=branch%3Amain"><picture><source media="(prefers-color-scheme: dark)" srcset="https://shieldcn.dev/github/ci/thaw-app/org-ci.svg?workflow=test-actions.yml&amp;branch=main&amp;label=TESTS&amp;variant=ghost&amp;font=geist-mono&amp;mode=dark" /><img alt="Tests" src="https://shieldcn.dev/github/ci/thaw-app/org-ci.svg?workflow=test-actions.yml&amp;branch=main&amp;label=TESTS&amp;variant=ghost&amp;font=geist-mono&amp;mode=light" /></picture></a>
+  <a href="https://github.com/thaw-app/org-ci/actions/workflows/actionlint.yml?query=branch%3Amain"><picture><source media="(prefers-color-scheme: dark)" srcset="https://shieldcn.dev/github/ci/thaw-app/org-ci.svg?workflow=actionlint.yml&amp;branch=main&amp;label=ACTIONLINT&amp;variant=ghost&amp;font=geist-mono&amp;mode=dark" /><img alt="actionlint" src="https://shieldcn.dev/github/ci/thaw-app/org-ci.svg?workflow=actionlint.yml&amp;branch=main&amp;label=ACTIONLINT&amp;variant=ghost&amp;font=geist-mono&amp;mode=light" /></picture></a>
+  <a href="https://sonarcloud.io/summary/new_code?id=thaw-app_org-ci"><picture><source media="(prefers-color-scheme: dark)" srcset="https://shieldcn.dev/sonar/quality-gate/thaw-app_org-ci.svg?label=QUALITY%20GATE&amp;variant=ghost&amp;font=geist-mono&amp;mode=dark" /><img alt="SonarCloud quality gate" src="https://shieldcn.dev/sonar/quality-gate/thaw-app_org-ci.svg?label=QUALITY%20GATE&amp;variant=ghost&amp;font=geist-mono&amp;mode=light" /></picture></a>
+</p>
+
 Organization-wide CI/CD building blocks for [thaw-app](https://github.com/thaw-app).
 
 Product repos (including apps that are **not** yet under `thaw-app`) should reference these actions by their **org-qualified GitHub path**, pinned to a commit SHA:
@@ -334,16 +340,18 @@ Outputs:
 | `provenance-artifact-name` | Workflow artifact holding the attestation bundles. Empty when `attest` was off |
 | `dmg-bundle-name`, `sbom-bundle-name` | Attestation bundles, `<file>.intoto.jsonl`. Empty when `attest` was off |
 
-The caller finishes the release in a job that `needs` the build, either with
-`release-macos-app.yml` below or with its own steps: check out the repository,
-download the build artifact and the provenance artifact, unzip the app with
-`ditto -x -k` into `build/Export`, sign the DMG and the SBOM with
-`cosign sign-blob --bundle <file>.sigstore.json`, create the GitHub Release with
-the DMG, the SBOM, the `.sha256` files, the `.sigstore.json` signatures and the
-`*.intoto.jsonl` bundles, then run `sparkle-release` on the unzipped app and
-publish its ZIP and appcast as described under Sparkle updates repository. The
-app ZIP keeps the bundle's symlinks, resource forks and notarization ticket,
-which a plain artifact upload loses.
+The caller finishes the release in a job that `needs` the build, with
+`release-macos-app.yml` below or with its own steps:
+
+1. Check out the repository and download the build and provenance artifacts.
+2. Unzip the app into `build/Export` with `ditto -x -k`. The app ZIP keeps the
+   bundle's symlinks, resource forks and notarization ticket, which a plain
+   artifact upload loses.
+3. Sign the DMG and the SBOM with `cosign sign-blob --bundle <file>.sigstore.json`.
+4. Create the GitHub Release with the DMG, the SBOM, the `.sha256` files, the
+   `.sigstore.json` signatures and the `*.intoto.jsonl` bundles.
+5. Run `sparkle-release` on the unzipped app and publish its ZIP and appcast as
+   described under Sparkle updates repository.
 
 Both workflows pin this repository's own actions by SHA, like a caller does,
 because they check out the caller and not org-ci. When one of those actions
@@ -352,29 +360,32 @@ changes, bump the pins in the workflows too.
 ### Publishing a release
 
 `.github/workflows/release-macos-app.yml` takes the artifacts of
-`build-macos-app.yml` and publishes them. In one macOS job it checks out the
-caller at the tag, resolves the release notes with `release-notes`, downloads
-the build and the provenance, restores the app with `ditto`, checks its signature, its stapled
-ticket, both attested digests and the attestation bundles (`gh attestation
-verify`, against the caller's repository and the build workflow), runs
+`build-macos-app.yml` and publishes them in one macOS job. It checks out the
+caller at the tag, resolves the release notes with `release-notes`, and
+downloads the build and the provenance. Before it uses them, it restores the app
+with `ditto`, checks the app's signature and stapled ticket, compares the DMG
+and SBOM against the attested digests, and runs `gh attestation verify` on both
+bundles against the caller's repository and the build workflow. It then runs
 `sparkle-release` for the ZIP, the deltas and the signed appcast, signs the DMG
-and the SBOM with cosign, creates the GitHub Release as a draft with every file
-and the attestation bundles, and when asked publishes the release and pushes
-the appcast. A dry run produces every file except the signatures and the
+and the SBOM with cosign, and creates the GitHub Release as a draft with every
+file and the attestation bundles. When asked, it publishes the release and
+pushes the appcast. A dry run produces every file except the signatures and the
 provenance bundles, and writes a report to the job summary instead.
 
-The order is fixed so that no release and no feed is public until the end: an
-unknown discussion category, a missing bundle or a failed Sparkle step stops the
-run while both releases are still drafts. Signing is not covered: cosign writes
-to the public Rekor log before anything is published, and that entry stays when
-the run fails afterwards. The caller's release is published first,
-then the updates release, then the appcast, so no feed item names a ZIP that is
-not there yet. A tag whose release is already published is refused, and so is a
-tag that names another commit than the one the build job built. One exception:
-when a run published the caller's release and then failed before the updates
-release, re-running it with the same build (the published DMG checksum must
-match) skips the caller's release and publishes the updates release and the
-appcast. An updates release that is already published is always refused.
+No release and no feed is public until the end. An unknown discussion category,
+a missing bundle or a failed Sparkle step stops the run while both releases are
+still drafts. Signing is the exception: cosign writes to the public Rekor log
+before anything is published, and that entry stays if the run fails later. The
+caller's release goes public first, then the updates release, then the appcast,
+so no feed item names a ZIP that is not there yet.
+
+A tag whose release is already published is refused, and so is a tag that names
+another commit than the one the build job built. The one case a re-run can
+finish is a run that published the caller's release and then failed before the
+updates release. Re-run with the same build (the published DMG checksum must
+match), and the run skips the caller's release and publishes the updates
+release and the appcast. An updates release that is already published is
+always refused.
 
 That leaves a run that failed on the appcast push after both releases went
 public. Re-running it is refused, because a new run makes a new Sparkle ZIP that

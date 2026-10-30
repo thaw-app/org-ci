@@ -236,11 +236,8 @@ jobs:
       SBOM_PATH: build/${{ inputs.sbom-name }}
       APPCAST_REPOSITORY: ${{ inputs.appcast-repository || github.repository }}
     steps:
-      # Re-running on a tag that already shipped would replace public assets
-      # under the same name. A draft is fine: this run finishes it. So is a
-      # caller release that an earlier run published before it failed on the
-      # updates release, when it carries this build's DMG: the run resumes
-      # after it and publishes the updates release and the appcast.
+      # Refuse a tag that already shipped, unless a failed run published only the
+      # caller's release, with this build's DMG; then resume after it.
       - name: Refuse a published release
         id: guard
         if: ${{ !inputs.dry-run }}
@@ -266,9 +263,8 @@ jobs:
             if [[ "$out" == "true" ]]; then state=draft; else state=published; fi
           }
 
-          # Its ZIP is an appcast enclosure; a new one would not match the old feed.
-          # So a run that failed on the appcast after both releases went public
-          # is not resumed: push the appcast-<tag> artifact it kept by hand.
+          # Its ZIP backs the live feed, so it is never rebuilt. After a failed
+          # appcast push, push the run's appcast-<tag> artifact by hand.
           if [[ -n "$UPDATES_REPO" ]]; then
             release_state "$UPDATES_REPO" "$UPDATES_TOKEN"
             if [[ "$state" == published ]]; then
@@ -300,10 +296,8 @@ jobs:
           echo "::notice::${TAG} is already published with this build; publishing the updates release and the appcast."
           echo "resume=true" >> "$GITHUB_OUTPUT"
 
-      # The caller is checked out at the tag, not this repository, so the
-      # actions below are pinned like a caller pins them. sparkle-release reads
-      # prior releases through the checkout's remote and the appcast script
-      # comes from the tag.
+      # The checkout is the caller at the tag, not org-ci, so the actions below
+      # are pinned by SHA. The appcast script and sparkle-release's remote come from it.
       - name: Checkout source
         id: source
         uses: thaw-app/org-ci/actions/checkout-source@dedf96e25ba6d24867c18e706b8bd9f6b1fb09d0
@@ -349,9 +343,8 @@ jobs:
           name: ${{ inputs.provenance-artifact }}
           path: build
 
-      # The app ZIP was made with ditto, so ditto restores the bundle with its
-      # signature and notarization ticket intact. The digests are the ones the
-      # build job attested; anything else would not match the provenance.
+      # ditto made the app ZIP, so ditto restores its signature and ticket. The
+      # digests are the attested ones; any other file would not match the provenance.
       - name: Unpack and check the build
         env:
           APP_ZIP: ${{ inputs.app-zip-name }}
@@ -495,9 +488,8 @@ jobs:
           echo "Update assets:"
           cat "$list"
 
-      # The ZIP and deltas are the appcast's enclosures. A draft here; Publish
-      # updates release below makes it public after the caller's release and
-      # before the appcast, so nothing points at a file that is not there.
+      # The appcast's enclosures, a draft until Publish updates release below,
+      # which runs after the caller's release and before the appcast.
       - name: Create updates GitHub Release (ZIP + deltas)
         if: ${{ inputs.sparkle && inputs.updates-repository != '' && !inputs.dry-run }}
         uses: softprops/action-gh-release@efb35369e0ad2afab669f228072c1b0d510eae64 # v3.0.3
@@ -516,8 +508,8 @@ jobs:
 
             Installer DMG: https://github.com/${{ github.repository }}/releases/tag/${{ inputs.tag }}
 
-      # Skipped on a dry run: keyless signing writes a permanent, public entry to
-      # the Sigstore transparency log, which cannot be retracted afterwards.
+      # Skipped on a dry run: keyless signing writes a permanent entry to the
+      # public Sigstore transparency log.
       - name: Install cosign
         if: ${{ !inputs.dry-run && steps.guard.outputs.resume != 'true' }}
         uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6 # v4.1.2
