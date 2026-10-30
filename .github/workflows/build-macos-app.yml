@@ -212,7 +212,7 @@ jobs:
       # are pinned like a caller pins them.
       - name: Checkout source
         id: source
-        uses: thaw-app/org-ci/actions/checkout-source@dedf96e25ba6d24867c18e706b8bd9f6b1fb09d0
+        uses: thaw-app/org-ci/actions/checkout-source@214298d1d187792fa31e638bf27b146f0de5565e
         with:
           project-name: ${{ inputs.project-name }}
           target-name: ${{ inputs.target-name }}
@@ -264,7 +264,7 @@ jobs:
       # one step that handles the raw signing secrets.
       - name: Configure signing
         id: signing
-        uses: thaw-app/org-ci/actions/configure-signing@dedf96e25ba6d24867c18e706b8bd9f6b1fb09d0
+        uses: thaw-app/org-ci/actions/configure-signing@214298d1d187792fa31e638bf27b146f0de5565e
         with:
           apple-application-cert: ${{ secrets.APPLE_APPLICATION_CERT }}
           apple-application-cert-password: ${{ secrets.APPLE_APPLICATION_CERT_PASSWORD }}
@@ -293,7 +293,7 @@ jobs:
           fi
 
       - name: Build
-        uses: thaw-app/org-ci/actions/build@dedf96e25ba6d24867c18e706b8bd9f6b1fb09d0
+        uses: thaw-app/org-ci/actions/build@214298d1d187792fa31e638bf27b146f0de5565e
         with:
           apple-team-id: ${{ secrets.APPLE_TEAM_ID }}
           project-name: ${{ steps.source.outputs.project-name }}
@@ -302,7 +302,7 @@ jobs:
           build-settings: ${{ inputs.build-settings }}
 
       - name: Export archive and package DMG
-        uses: thaw-app/org-ci/actions/export-and-package@dedf96e25ba6d24867c18e706b8bd9f6b1fb09d0
+        uses: thaw-app/org-ci/actions/export-and-package@214298d1d187792fa31e638bf27b146f0de5565e
         with:
           apple-team-id: ${{ secrets.APPLE_TEAM_ID }}
           app-name: ${{ inputs.app-name }}
@@ -311,7 +311,7 @@ jobs:
           bundle-identifier: ${{ inputs.bundle-identifier }}
 
       - name: Notarize DMG
-        uses: thaw-app/org-ci/actions/notarize-and-validate@dedf96e25ba6d24867c18e706b8bd9f6b1fb09d0
+        uses: thaw-app/org-ci/actions/notarize-and-validate@214298d1d187792fa31e638bf27b146f0de5565e
         with:
           dmg-name: ${{ inputs.dmg-name }}
           app-name: ${{ inputs.app-name }}
