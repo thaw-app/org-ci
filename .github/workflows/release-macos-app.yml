@@ -300,7 +300,7 @@ jobs:
       # are pinned by SHA. The appcast script and sparkle-release's remote come from it.
       - name: Checkout source
         id: source
-        uses: thaw-app/org-ci/actions/checkout-source@dedf96e25ba6d24867c18e706b8bd9f6b1fb09d0
+        uses: thaw-app/org-ci/actions/checkout-source@214298d1d187792fa31e638bf27b146f0de5565e
         with:
           project-name: ${{ inputs.project-name }}
           target-name: ${{ inputs.target-name }}
@@ -324,7 +324,7 @@ jobs:
 
       - name: Resolve release notes
         id: notes
-        uses: thaw-app/org-ci/actions/release-notes@dedf96e25ba6d24867c18e706b8bd9f6b1fb09d0
+        uses: thaw-app/org-ci/actions/release-notes@214298d1d187792fa31e638bf27b146f0de5565e
         with:
           tag: ${{ inputs.tag }}
           release-notes: ${{ inputs.release-notes }}
@@ -412,7 +412,7 @@ jobs:
       - name: Sparkle ZIP and appcast
         id: sparkle
         if: inputs.sparkle
-        uses: thaw-app/org-ci/actions/sparkle-release@dedf96e25ba6d24867c18e706b8bd9f6b1fb09d0
+        uses: thaw-app/org-ci/actions/sparkle-release@214298d1d187792fa31e638bf27b146f0de5565e
         with:
           tag: ${{ inputs.tag }}
           channel: ${{ inputs.channel }}
@@ -633,7 +633,7 @@ jobs:
 
       - name: Publish appcast
         if: ${{ inputs.sparkle && inputs.publish-appcast && inputs.publish-release && !inputs.dry-run }}
-        uses: thaw-app/org-ci/actions/publish-file-to-branch@dedf96e25ba6d24867c18e706b8bd9f6b1fb09d0
+        uses: thaw-app/org-ci/actions/publish-file-to-branch@214298d1d187792fa31e638bf27b146f0de5565e
         with:
           repository: ${{ env.APPCAST_REPOSITORY }}
           branch: ${{ inputs.appcast-branch }}
@@ -649,7 +649,7 @@ jobs:
 
       - name: Mirror legacy appcast
         if: ${{ inputs.sparkle && inputs.publish-appcast && inputs.publish-release && !inputs.dry-run && inputs.legacy-appcast-repository != '' && steps.appcast.outputs.legacy-appcast-path != '' }}
-        uses: thaw-app/org-ci/actions/publish-file-to-branch@dedf96e25ba6d24867c18e706b8bd9f6b1fb09d0
+        uses: thaw-app/org-ci/actions/publish-file-to-branch@214298d1d187792fa31e638bf27b146f0de5565e
         with:
           repository: ${{ inputs.legacy-appcast-repository }}
           branch: ${{ inputs.legacy-appcast-branch }}
