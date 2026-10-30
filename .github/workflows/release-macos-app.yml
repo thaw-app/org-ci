@@ -8,7 +8,8 @@ name: Release macOS app
 #
 # The release is a draft until the last step, and the appcast goes out after
 # it, so a failure on the way leaves nothing public and no feed item names a
-# file that is not there yet. A dry run produces every file and reports on it,
+# file that is not there yet. A run that failed after publishing the caller's
+# release can be re-run with the same build to publish the rest. A dry run produces every file and reports on it,
 # and publishes, signs and pushes nothing.
 
 on:
@@ -235,23 +236,66 @@ jobs:
       APPCAST_REPOSITORY: ${{ inputs.appcast-repository || github.repository }}
     steps:
       # Re-running on a tag that already shipped would replace public assets
-      # under the same name. A draft is fine: this run finishes it.
+      # under the same name. A draft is fine: this run finishes it. So is a
+      # caller release that an earlier run published before it failed on the
+      # updates release, when it carries this build's DMG: the run resumes
+      # after it and publishes the updates release and the appcast.
       - name: Refuse a published release
+        id: guard
         if: ${{ !inputs.dry-run }}
         env:
-          GH_TOKEN: ${{ github.token }}
-          GH_REPO: ${{ github.repository }}
+          CALLER_TOKEN: ${{ github.token }}
+          UPDATES_TOKEN: ${{ secrets.UPDATES_GITHUB_TOKEN }}
+          UPDATES_REPO: ${{ inputs.sparkle && inputs.updates-repository || '' }}
+          PUBLISH_RELEASE: ${{ inputs.publish-release }}
+          DMG_DIGEST: ${{ inputs.dmg-digest }}
         run: |
           set -euo pipefail
-          if ! draft="$(gh release view "$TAG" --json isDraft -q .isDraft 2>&1)"; then
-            [[ "$draft" == *"release not found"* ]] && exit 0
-            echo "::error::Could not look up the release for ${TAG}: ${draft}"
-            exit 1
+          # Sets state to none, draft or published.
+          release_state() {
+            local repo="$1" token="$2" out
+            if ! out="$(GH_TOKEN="$token" gh release view "$TAG" --repo "$repo" --json isDraft -q .isDraft 2>&1)"; then
+              if [[ "$out" == *"release not found"* ]]; then
+                state=none
+                return
+              fi
+              echo "::error::Could not look up the release for ${TAG} on ${repo}: ${out}"
+              exit 1
+            fi
+            if [[ "$out" == "true" ]]; then state=draft; else state=published; fi
+          }
+
+          # Its ZIP is an appcast enclosure; a new one would not match the old feed.
+          if [[ -n "$UPDATES_REPO" ]]; then
+            release_state "$UPDATES_REPO" "$UPDATES_TOKEN"
+            if [[ "$state" == published ]]; then
+              echo "::error::${TAG} is already published on ${UPDATES_REPO}. Release it under a new tag instead."
+              exit 1
+            fi
           fi
-          if [[ "$draft" != "true" ]]; then
+
+          release_state "$GITHUB_REPOSITORY" "$CALLER_TOKEN"
+          if [[ "$state" != published ]]; then
+            echo "resume=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          if [[ -z "$UPDATES_REPO" || "$PUBLISH_RELEASE" != "true" ]]; then
             echo "::error::${TAG} is already published. Release it under a new tag instead."
             exit 1
           fi
+          dir="$RUNNER_TEMP/published-checksum"
+          rm -rf "$dir"
+          if ! GH_TOKEN="$CALLER_TOKEN" gh release download "$TAG" --repo "$GITHUB_REPOSITORY" \
+              --pattern "${DMG_NAME}.sha256" --dir "$dir"; then
+            echo "::error::${TAG} is already published and its DMG checksum could not be read. Release it under a new tag instead."
+            exit 1
+          fi
+          if [[ "sha256:$(awk '{ print $1; exit }' "$dir/${DMG_NAME}.sha256")" != "$DMG_DIGEST" ]]; then
+            echo "::error::${TAG} is already published with another build's DMG. Release it under a new tag instead."
+            exit 1
+          fi
+          echo "::notice::${TAG} is already published with this build; publishing the updates release and the appcast."
+          echo "resume=true" >> "$GITHUB_OUTPUT"
 
       # The caller is checked out at the tag, not this repository, so the
       # actions below are pinned like a caller pins them. sparkle-release reads
@@ -466,11 +510,11 @@ jobs:
       # Skipped on a dry run: keyless signing writes a permanent, public entry to
       # the Sigstore transparency log, which cannot be retracted afterwards.
       - name: Install cosign
-        if: ${{ !inputs.dry-run }}
+        if: ${{ !inputs.dry-run && steps.guard.outputs.resume != 'true' }}
         uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6 # v4.1.2
 
       - name: Sign installer DMG and SBOM (Sigstore)
-        if: ${{ !inputs.dry-run }}
+        if: ${{ !inputs.dry-run && steps.guard.outputs.resume != 'true' }}
         env:
           COSIGN_YES: "true"
           DMG_PATH: build/${{ inputs.dmg-name }}
@@ -510,7 +554,7 @@ jobs:
           cat "$list"
 
       - name: Create GitHub Release
-        if: ${{ !inputs.dry-run }}
+        if: ${{ !inputs.dry-run && steps.guard.outputs.resume != 'true' }}
         uses: softprops/action-gh-release@efb35369e0ad2afab669f228072c1b0d510eae64 # v3.0.3
         with:
           # softprops v3 uses the token input (env GITHUB_TOKEN is ignored).
@@ -528,7 +572,7 @@ jobs:
       # run while the release is still a draft.
       - name: Resolve discussion category
         id: discussion
-        if: ${{ inputs.publish-release && !inputs.dry-run && inputs.discussion-category != '' }}
+        if: ${{ inputs.publish-release && !inputs.dry-run && inputs.discussion-category != '' && steps.guard.outputs.resume != 'true' }}
         env:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
@@ -561,7 +605,7 @@ jobs:
       # Before the appcast, so no feed item names a ZIP on a release that is
       # not public yet.
       - name: Publish release
-        if: ${{ inputs.publish-release && !inputs.dry-run }}
+        if: ${{ inputs.publish-release && !inputs.dry-run && steps.guard.outputs.resume != 'true' }}
         env:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}

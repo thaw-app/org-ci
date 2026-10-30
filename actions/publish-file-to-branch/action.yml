@@ -95,6 +95,11 @@ runs:
           echo "destination-path must be a relative path without .. or .git components, got: ${DEST_PATH}"
           exit 1
         fi
+        # And it names a file: cp into a directory would publish under another name.
+        if [[ "$DEST_PATH" == */ || "$DEST_PATH" == . || "$DEST_PATH" == */. ]]; then
+          echo "destination-path must name a file, got: ${DEST_PATH}"
+          exit 1
+        fi
 
         # Distinct work dir per target so two publishes in one job cannot
         # collide on $RUNNER_TEMP.
@@ -146,6 +151,10 @@ runs:
           existing_real="$(cd "$existing" && pwd -P)"
           if [[ "$existing_real" != "$work_real" && "$existing_real" != "$work_real"/* ]] || [[ -L "$dest" ]]; then
             echo "destination-path resolves through a symbolic link on ${TARGET_BRANCH}: ${DEST_PATH}"
+            exit 1
+          fi
+          if [[ -d "$dest" ]]; then
+            echo "destination-path is a directory on ${TARGET_BRANCH}: ${DEST_PATH}"
             exit 1
           fi
           mkdir -p "$(dirname "$dest")"

@@ -1,3 +1,4 @@
+import datetime
 import importlib.util
 import unittest
 from pathlib import Path
@@ -66,6 +67,36 @@ class SuppressionErrorsTest(unittest.TestCase):
     def test_a_package_override_that_only_changes_the_license_is_not_a_suppression(self):
         config = {"PackageOverrides": [{"name": "foo", "license": {"override": ["MIT"]}}]}
         self.assertEqual(validate.suppression_errors(config, POLICY), [])
+
+    def test_the_zero_time_counts_as_no_expiry(self):
+        zero = datetime.datetime(1, 1, 1, tzinfo=datetime.timezone.utc)
+        for until in (zero, "0001-01-01T00:00:00Z", datetime.date(1, 1, 1)):
+            config = {
+                "PackageOverrides": [
+                    {"name": "foo", "ignore": True, "reason": "dev only", "effectiveUntil": until}
+                ]
+            }
+            errors = validate.suppression_errors(config, POLICY)
+            self.assertEqual(len(errors), 1, until)
+            self.assertIn("requires effectiveUntil", errors[0])
+
+    def test_field_names_match_regardless_of_case(self):
+        config = {
+            "packageoverrides": [{"name": "foo", "Vulnerability": {"Ignore": True}}]
+        }
+        errors = validate.suppression_errors(config, POLICY)
+        self.assertEqual(len(errors), 2)
+        self.assertIn("requires effectiveUntil", errors[1])
+
+    def test_a_field_spelled_twice_is_reported(self):
+        config = {
+            "PackageOverrides": [
+                {"name": "foo", "ignore": False, "Ignore": True,
+                 "reason": "dev only", "effectiveUntil": "2027-01-01"}
+            ]
+        }
+        errors = validate.suppression_errors(config, POLICY)
+        self.assertEqual(errors, ["PackageOverrides[1] sets ignore more than once: Ignore, ignore"])
 
     def test_a_package_override_that_is_not_a_table_is_reported(self):
         errors = validate.suppression_errors({"PackageOverrides": ["foo"]}, POLICY)

@@ -60,7 +60,7 @@ runs:
         fi
         keychain_password="$(/usr/bin/openssl rand -base64 32)"
         /usr/bin/security delete-keychain "$keychain" 2>/dev/null || true
-        rm -f "$keychain" "$keychain"-db 2>/dev/null || true
+        /bin/rm -f "$keychain" "$keychain"-db 2>/dev/null || true
         /usr/bin/security create-keychain -p "$keychain_password" "$keychain"
         /usr/bin/security set-keychain-settings -lut 21600 "$keychain"
         /usr/bin/security unlock-keychain -p "$keychain_password" "$keychain"
@@ -73,7 +73,7 @@ runs:
         /usr/bin/security list-keychains -d user -s "$keychain" ${existing[@]+"${existing[@]}"}
         cert_p12="$RUNNER_TEMP/cert.p12"
         /usr/bin/base64 -D <<<"$APPLE_APPLICATION_CERT" > "$cert_p12"
-        trap 'rm -f "$cert_p12"' EXIT
+        trap '/bin/rm -f "$cert_p12"' EXIT
         /usr/bin/security import "$cert_p12" -k "$keychain" \
           -P "$APPLE_APPLICATION_CERT_PASSWORD" -T /usr/bin/codesign
         /usr/bin/security set-key-partition-list -S "apple-tool:,apple:,codesign:" \

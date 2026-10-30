@@ -282,7 +282,7 @@ jobs:
       id-token: write
       attestations: write
     with:
-      version: ${{ github.ref_name }}
+      version: ${{ github.ref_type == 'tag' && github.ref_name || '' }}
       project-name: MyApp.xcodeproj
       target-name: MyApp
       scheme-name: MyApp
@@ -364,7 +364,11 @@ discussion category, a missing bundle or a failed Sparkle step stops the run
 while both releases are still drafts. The caller's release is published first,
 then the updates release, then the appcast, so no feed item names a ZIP that is
 not there yet. A tag whose release is already published is refused, and so is a
-tag that names another commit than the one the build job built.
+tag that names another commit than the one the build job built. One exception:
+when a run published the caller's release and then failed before the updates
+release, re-running it with the same build (the published DMG checksum must
+match) skips the caller's release and publishes the updates release and the
+appcast. An updates release that is already published is always refused.
 
 ```yaml
 jobs:
