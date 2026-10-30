@@ -97,6 +97,18 @@ class DetectCodeChangesTest(unittest.TestCase):
         self.commit("Sources/Café.swift")
         self.assertEqual(self.detect(), "code=true\n")
 
+    def test_a_code_file_with_a_quote_in_its_name_counts_as_code(self):
+        self.commit('Sources/Say "hi".swift')
+        self.assertEqual(self.detect(), "code=true\n")
+
+    def test_a_doc_file_with_a_quote_in_its_name_is_not(self):
+        self.commit('docs/Say "hi".md')
+        self.assertEqual(self.detect(), "code=false\n")
+
+    def test_a_path_with_a_line_break_counts_as_code(self):
+        self.commit("docs/two\nlines.md")
+        self.assertEqual(self.detect(), "code=true\n")
+
     def test_a_pattern_that_is_not_a_valid_expression_fails_the_step(self):
         self.commit("Sources/App.swift")
         for patterns in (r"(\.swift$", "-swift("):

@@ -84,7 +84,24 @@ runs:
         aside="$RUNNER_TEMP/checkout-source-local-actions"
         if [[ -d "$aside" ]]; then
           actions_dir="$GITHUB_WORKSPACE/$LOCAL_ACTIONS"
-          mkdir -p "$(dirname "$actions_dir")"
+          parent="$(dirname "$actions_dir")"
+          # A symbolic link would send rm -rf and cp outside the workspace, so the
+          # nearest existing ancestor must resolve inside it and the path must not be a link.
+          existing="$parent"
+          while [[ ! -e "$existing" ]]; do
+            existing="$(dirname "$existing")"
+          done
+          workspace_real="$(cd "$GITHUB_WORKSPACE" && pwd -P)"
+          existing_real="$(cd "$existing" && pwd -P)"
+          if [[ "$existing_real" != "$workspace_real" && "$existing_real" != "$workspace_real"/* ]]; then
+            echo "::error::${LOCAL_ACTIONS} resolves outside the workspace at this ref"
+            exit 1
+          fi
+          if [[ -L "$actions_dir" ]]; then
+            echo "::error::${LOCAL_ACTIONS} is a symbolic link at this ref"
+            exit 1
+          fi
+          mkdir -p "$parent"
           rm -rf "$actions_dir"
           cp -R "$aside" "$actions_dir"
         fi
@@ -109,9 +126,11 @@ runs:
         deployment_target="$(python3 "$GITHUB_ACTION_PATH/resolve_deployment_target.py" "$TARGET_NAME" < "$project_json")"
         test -n "$deployment_target"
         commit="$(git -C "$SOURCE_PATH" rev-parse HEAD)"
+        # The commit goes last: a later line wins in GITHUB_OUTPUT, so nothing
+        # read from the project can replace it.
         {
-          echo "commit=$commit"
           echo "project_name=$project_name"
           echo "deployment_target=$deployment_target"
+          echo "commit=$commit"
         } >> "$GITHUB_OUTPUT"
         echo "Checked out $GITHUB_REPOSITORY@$commit (macOS $deployment_target)"

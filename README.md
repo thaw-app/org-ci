@@ -1,5 +1,11 @@
 # org-ci
 
+<p>
+  <a href="https://github.com/thaw-app/org-ci/actions/workflows/test-actions.yml?query=branch%3Amain"><picture><source media="(prefers-color-scheme: dark)" srcset="https://shieldcn.dev/github/ci/thaw-app/org-ci.svg?workflow=test-actions.yml&amp;branch=main&amp;label=TESTS&amp;variant=ghost&amp;font=geist-mono&amp;mode=dark" /><img alt="Tests" src="https://shieldcn.dev/github/ci/thaw-app/org-ci.svg?workflow=test-actions.yml&amp;branch=main&amp;label=TESTS&amp;variant=ghost&amp;font=geist-mono&amp;mode=light" /></picture></a>
+  <a href="https://github.com/thaw-app/org-ci/actions/workflows/actionlint.yml?query=branch%3Amain"><picture><source media="(prefers-color-scheme: dark)" srcset="https://shieldcn.dev/github/ci/thaw-app/org-ci.svg?workflow=actionlint.yml&amp;branch=main&amp;label=ACTIONLINT&amp;variant=ghost&amp;font=geist-mono&amp;mode=dark" /><img alt="actionlint" src="https://shieldcn.dev/github/ci/thaw-app/org-ci.svg?workflow=actionlint.yml&amp;branch=main&amp;label=ACTIONLINT&amp;variant=ghost&amp;font=geist-mono&amp;mode=light" /></picture></a>
+  <a href="https://sonarcloud.io/summary/new_code?id=thaw-app_org-ci"><picture><source media="(prefers-color-scheme: dark)" srcset="https://shieldcn.dev/sonar/quality-gate/thaw-app_org-ci.svg?label=QUALITY%20GATE&amp;variant=ghost&amp;font=geist-mono&amp;mode=dark" /><img alt="SonarCloud quality gate" src="https://shieldcn.dev/sonar/quality-gate/thaw-app_org-ci.svg?label=QUALITY%20GATE&amp;variant=ghost&amp;font=geist-mono&amp;mode=light" /></picture></a>
+</p>
+
 Organization-wide CI/CD building blocks for [thaw-app](https://github.com/thaw-app).
 
 Product repos (including apps that are **not** yet under `thaw-app`) should reference these actions by their **org-qualified GitHub path**, pinned to a commit SHA:
@@ -230,11 +236,16 @@ be older than the workflow's own local actions, so the action sets
 ### Building a release
 
 `.github/workflows/build-macos-app.yml` builds, signs, notarizes and attests a
-macOS app in one job of its own. It runs `checkout-source`, `configure-signing`,
-`build`, `export-and-package` and `notarize-and-validate`, then generates a
-CycloneDX SBOM with a pinned syft, writes sha256 checksums, attests the DMG and
-the SBOM, zips the exported `.app` with `ditto` and uploads everything as one
-workflow artifact.
+macOS app in two jobs of its own. The build job runs `checkout-source`,
+`configure-signing`, `build`, `export-and-package` and `notarize-and-validate`,
+then generates a CycloneDX SBOM with a pinned syft, writes sha256 checksums,
+zips the exported `.app` with `ditto` and uploads everything as one workflow
+artifact. The attest job downloads that artifact, checks the files against the
+digests the build job reported, attests the DMG and the SBOM by digest and
+uploads the bundles as a second artifact. It is the only job with the
+`id-token` permission: the app's prepare script and build phases run in the
+build job and never see the identity that signs the provenance, which is what
+SLSA Build L3 asks of a builder.
 
 It exists for SLSA Build L3. When a caller runs the actions in its own job, the
 caller's workflow is the builder named in the provenance, and GitHub grants
@@ -249,10 +260,15 @@ gh attestation verify App.dmg --owner <org> \
   --signer-workflow thaw-app/org-ci/.github/workflows/build-macos-app.yml
 ```
 
-The provenance names the commit that triggered the caller, so the workflow
-builds that commit and fails when `ref` resolves to another one. Dispatch a
-release run on its tag, `gh workflow run release.yml --ref 1.2.3`, not on a
-branch with the tag as an input. `ref` can then stay empty.
+The provenance names the commit that triggered the caller, so with `attest` on
+the workflow builds that commit and fails when `ref` resolves to another one.
+Dispatch a release run on its tag, `gh workflow run release.yml --ref 1.2.3`,
+not on a branch with the tag as an input. `ref` can then stay empty. With
+`attest` off there is no provenance, so any `ref` builds: a development build
+passes the branch and leaves `version` empty. The job holds the signing and
+notarization secrets either way, so only build refs the caller trusts, such as
+branches of its own repository that someone with write access asked for, as
+`pr-build-command` enforces.
 
 Call it as a job. The caller's job needs `id-token: write` and
 `attestations: write`; the called workflow asks for nothing more. A `uses:` job
@@ -272,7 +288,7 @@ jobs:
       id-token: write
       attestations: write
     with:
-      version: ${{ github.ref_name }}
+      version: ${{ github.ref_type == 'tag' && github.ref_name || '' }}
       project-name: MyApp.xcodeproj
       target-name: MyApp
       scheme-name: MyApp
@@ -290,21 +306,21 @@ Inputs:
 
 | Input | Required | Purpose |
 | --- | --- | --- |
-| `ref` | no | Ref to build. Empty builds the triggering commit; another ref must name that same commit |
-| `version` | yes | Version being built. Names the SBOM and the artifact |
+| `ref` | no | Ref to build. Empty builds the triggering commit; with `attest` on, another ref must name that same commit |
+| `version` | no | Version being built. Names the SBOM and the artifact; empty names them `dev-<short sha>` |
 | `project-name` | yes | Xcode project relative to the checkout |
 | `target-name` | yes | App target whose Release deployment target is used |
 | `scheme-name` | yes | Scheme to archive |
-| `app-name` | yes | Name of the `.app` bundle |
-| `dmg-name` | yes | Name of the DMG to produce |
-| `asset-prefix` | yes | Prefix of the SBOM file name (`Prefix_version.cdx.json`) |
+| `app-name` | yes | Name of the `.app` bundle: letters, digits, `._ -`, starting with a letter, digit or `_` and ending in `.app` |
+| `dmg-name` | yes | Name of the DMG to produce: letters, digits, `._-`, starting with a letter, digit or `_` and ending in `.dmg` |
+| `asset-prefix` | yes | Prefix of the SBOM file name (`Prefix_version.cdx.json`): letters, digits, `._-` |
 | `environment` | yes | Caller environment that holds the signing secrets |
 | `runner` | no | Runner label, default `macos-latest` |
 | `xcode-version` | no | Passed to setup-xcode, default `latest` |
 | `prepare-script` | no | Script inside the checkout to run with `sh` before the build |
 | `build-settings` | no | Extra xcodebuild settings, one `NAME=value` per line |
 | `bundle-identifier` | no | Needed with a provisioning profile |
-| `attest` | no | Default `true`. Off for dry runs: an attestation is a permanent public record |
+| `attest` | no | Default `true`. Off for dry runs: an attestation is a permanent public record. Off also skips the attest job and the triggering-commit check |
 | `retention-days` | no | Days the artifact is kept, default 7 |
 
 Secrets: `APPLE_APPLICATION_CERT`, `APPLE_APPLICATION_CERT_PASSWORD`,
@@ -316,25 +332,153 @@ Outputs:
 | Output | Content |
 | --- | --- |
 | `commit` | Commit that was built |
-| `artifact-name` | Workflow artifact holding every file below |
+| `version` | Version that named the SBOM and the artifact |
+| `artifact-name` | Workflow artifact holding the DMG, the SBOM, their `.sha256` files and the app ZIP |
 | `app-zip-name` | Exported `.app` as a ZIP |
 | `dmg-name`, `dmg-digest` | DMG file name and `sha256:<hex>` |
 | `sbom-name`, `sbom-digest` | SBOM file name and `sha256:<hex>` |
+| `provenance-artifact-name` | Workflow artifact holding the attestation bundles. Empty when `attest` was off |
 | `dmg-bundle-name`, `sbom-bundle-name` | Attestation bundles, `<file>.intoto.jsonl`. Empty when `attest` was off |
 
-The caller finishes the release in a job that `needs` the build: check out the
-repository (`sparkle-release` reads a feed on the caller repository through its
-git remote, and `release-notes` reads the changelog), download the artifact,
-unzip the app with `ditto -x -k` into `build/Export`, create the GitHub Release
-with the DMG, the SBOM and the `.sha256` files, run `sparkle-release` on the
-unzipped app, publish its ZIP and appcast as described under Sparkle updates
-repository, and attach the `*.intoto.jsonl` bundles to the release. The app ZIP
-keeps the bundle's symlinks, resource forks and notarization ticket, which a
-plain artifact upload loses.
+The caller finishes the release in a job that `needs` the build, with
+`release-macos-app.yml` below or with its own steps:
 
-The workflow pins this repository's own actions by SHA, like a caller does,
-because it checks out the caller and not org-ci. When one of those actions
-changes, bump the pins in the workflow too.
+1. Check out the repository and download the build and provenance artifacts.
+2. Unzip the app into `build/Export` with `ditto -x -k`. The app ZIP keeps the
+   bundle's symlinks, resource forks and notarization ticket, which a plain
+   artifact upload loses.
+3. Sign the DMG and the SBOM with `cosign sign-blob --bundle <file>.sigstore.json`.
+4. Create the GitHub Release with the DMG, the SBOM, the `.sha256` files, the
+   `.sigstore.json` signatures and the `*.intoto.jsonl` bundles.
+5. Run `sparkle-release` on the unzipped app and publish its ZIP and appcast as
+   described under Sparkle updates repository.
+
+Both workflows pin this repository's own actions by SHA, like a caller does,
+because they check out the caller and not org-ci. When one of those actions
+changes, bump the pins in the workflows too.
+
+### Publishing a release
+
+`.github/workflows/release-macos-app.yml` takes the artifacts of
+`build-macos-app.yml` and publishes them in one macOS job. It checks out the
+caller at the tag, resolves the release notes with `release-notes`, and
+downloads the build and the provenance. Before it uses them, it restores the app
+with `ditto`, checks the app's signature and stapled ticket, compares the DMG
+and SBOM against the attested digests, and runs `gh attestation verify` on both
+bundles against the caller's repository and the build workflow. It then runs
+`sparkle-release` for the ZIP, the deltas and the signed appcast, signs the DMG
+and the SBOM with cosign, and creates the GitHub Release as a draft with every
+file and the attestation bundles. When asked, it publishes the release and
+pushes the appcast. A dry run produces every file except the signatures and the
+provenance bundles, and writes a report to the job summary instead.
+
+No release and no feed is public until the end. An unknown discussion category,
+a missing bundle or a failed Sparkle step stops the run while both releases are
+still drafts. Signing is the exception: cosign writes to the public Rekor log
+before anything is published, and that entry stays if the run fails later. The
+caller's release goes public first, then the updates release, then the appcast,
+so no feed item names a ZIP that is not there yet.
+
+A tag whose release is already published is refused, and so is a tag that names
+another commit than the one the build job built. The one case a re-run can
+finish is a run that published the caller's release and then failed before the
+updates release. Re-run with the same build (the published DMG checksum must
+match), and the run skips the caller's release and publishes the updates
+release and the appcast. An updates release that is already published is
+always refused.
+
+That leaves a run that failed on the appcast push after both releases went
+public. Re-running it is refused, because a new run makes a new Sparkle ZIP that
+the published one would not match. Recover by hand instead: the failed run keeps
+the appcast it made as the `appcast-<tag>` artifact (and the legacy appcast, when
+there is one). Download it with `gh run download <run-id> -n appcast-<tag>`, then
+commit it as `appcast.xml` to the appcast branch, or push it with
+`publish-file-to-branch`.
+
+```yaml
+jobs:
+  release:
+    needs: [meta, build]
+    uses: thaw-app/org-ci/.github/workflows/release-macos-app.yml@<sha>
+    permissions:
+      contents: write
+      id-token: write
+    with:
+      tag: ${{ needs.meta.outputs.tag }}
+      channel: ${{ needs.meta.outputs.channel }}
+      prerelease: ${{ needs.meta.outputs.prerelease == 'true' }}
+      project-name: MyApp.xcodeproj
+      target-name: MyApp
+      app-name: MyApp.app
+      asset-prefix: MyApp
+      commit: ${{ needs.build.outputs.commit }}
+      build-artifact: ${{ needs.build.outputs.artifact-name }}
+      provenance-artifact: ${{ needs.build.outputs.provenance-artifact-name }}
+      app-zip-name: ${{ needs.build.outputs.app-zip-name }}
+      dmg-name: ${{ needs.build.outputs.dmg-name }}
+      dmg-digest: ${{ needs.build.outputs.dmg-digest }}
+      sbom-name: ${{ needs.build.outputs.sbom-name }}
+      sbom-digest: ${{ needs.build.outputs.sbom-digest }}
+      dmg-bundle-name: ${{ needs.build.outputs.dmg-bundle-name }}
+      sbom-bundle-name: ${{ needs.build.outputs.sbom-bundle-name }}
+      release-notes: ${{ inputs.release_notes }}
+      sparkle-version: "2.10.0"
+      sparkle-sha256: <sha256 of Sparkle-2.10.0.tar.xz>
+      environment: release
+      runner: macos-latest
+      publish-release: ${{ inputs.publish_release }}
+      publish-appcast: ${{ inputs.publish_appcast }}
+      dry-run: ${{ inputs.dry_run }}
+    secrets: inherit
+```
+
+Inputs:
+
+| Input | Required | Purpose |
+| --- | --- | --- |
+| `tag` | yes | Release tag |
+| `channel` | no | Sparkle channel, default `stable` |
+| `prerelease` | no | Mark the release as a prerelease, default `false` |
+| `project-name`, `target-name` | yes | For `checkout-source` |
+| `app-name` | yes | Name of the `.app` bundle |
+| `asset-prefix` | yes | Prefix of the Sparkle ZIP and the SBOM |
+| `appcast-title` | no | Title of a new appcast; empty uses `asset-prefix` |
+| `commit`, `build-artifact`, `app-zip-name`, `dmg-name`, `dmg-digest`, `sbom-name`, `sbom-digest` | yes | The build workflow's outputs of the same names; the tag must name `commit` |
+| `provenance-artifact`, `dmg-bundle-name`, `sbom-bundle-name` | no | The build's provenance artifact and bundle names; required unless `dry-run` |
+| `release-notes` | no | Notes override; empty reads the changelog, and GitHub generates them when it has no section for the tag |
+| `changelog-paths` | no | Changelog files to look in, one per line, default `CHANGELOG.md` |
+| `sparkle` | no | Default `true`. Off ships the DMG alone |
+| `sparkle-version`, `sparkle-sha256` | yes | Sparkle tools, matching the app's `Package.resolved` |
+| `updates-repository` | no | Repository that gets the ZIP and deltas as a release of its own; empty attaches them to the caller's release |
+| `appcast-repository`, `appcast-branch` | no | Where `appcast.xml` is served; default the caller's `gh-pages` |
+| `appcast-url` | no | Live appcast URL, for the dry run's diff |
+| `appcast-script` | no | Script in the checkout that edits the appcast before publishing; see the workflow for its contract |
+| `legacy-appcast-repository`, `legacy-appcast-branch`, `legacy-appcast-url` | no | A second feed fed by the script's `legacy-appcast-path` |
+| `environment` | yes | Caller environment that holds the release secrets |
+| `runner` | no | macOS runner label, default `macos-latest` |
+| `publish-release` | no | Publish at the end, default `false` leaves a draft |
+| `publish-appcast` | no | Push the appcast once the release is published, default `true` |
+| `discussion-category` | no | Open a release discussion in this category when publishing |
+| `dry-run` | no | Produce and report every file, publish nothing |
+
+Secrets, matched by name through `secrets: inherit`:
+`SPARKLE_ED25519_PRIVATE_KEY` when `sparkle` is on, `UPDATES_GITHUB_TOKEN` when
+`updates-repository` or `appcast-repository` is another repository, and
+`LEGACY_APPCAST_TOKEN` with `legacy-appcast-repository`. The run's own token is
+used for the caller's release and branches, so the calling job needs
+`contents: write`, and `id-token: write` for cosign's keyless signing.
+
+The cosign signature names this workflow, at the revision the caller pinned, as
+the signer. Verify a release asset against that revision and the caller's
+repository:
+
+```sh
+cosign verify-blob --bundle App.dmg.sigstore.json \
+  --certificate-identity 'https://github.com/thaw-app/org-ci/.github/workflows/release-macos-app.yml@<sha>' \
+  --certificate-oidc-issuer https://token.actions.githubusercontent.com \
+  --certificate-github-workflow-repository <owner>/<repo> \
+  App.dmg
+```
 
 ## Job contract
 
