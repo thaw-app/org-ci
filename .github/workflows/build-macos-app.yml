@@ -418,11 +418,13 @@ jobs:
         run: security delete-keychain "$RUNNER_TEMP/buildagent.keychain" || true
 
   # The only job with the identity that signs provenance. It runs none of the
-  # app's code and attests the digests the build job reported.
+  # app's code and attests the digests the build job reported. It names the
+  # environment because a caller may keep the required secrets only there.
   attest:
     needs: build
     if: inputs.attest
     runs-on: ubuntu-latest
+    environment: ${{ inputs.environment }}
     permissions:
       contents: read
       id-token: write
