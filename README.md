@@ -273,8 +273,9 @@ branches of its own repository that someone with write access asked for, as
 Call it as a job. The caller's job needs `id-token: write` and
 `attestations: write`; the called workflow asks for nothing more. A `uses:` job
 cannot set an `environment`, so the workflow takes the environment's name as an
-input and applies its protection rules before any secret is read. Pass the
-secrets with `secrets: inherit`, which matches them by the names below. It is the
+input and applies its protection rules before any secret is read. The build and
+attest jobs both name it, so an environment with required reviewers asks for
+approval once per job. The attest job reads no secret. Pass the secrets with `secrets: inherit`, which matches them by the names below. It is the
 only way environment secrets reach a called workflow, and it works for callers
 in the same organization. A caller that keeps them as repository secrets can
 map them one by one under `secrets:` instead.
