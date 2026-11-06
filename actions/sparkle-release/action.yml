@@ -311,8 +311,9 @@ runs:
             --jq '.[] | select(.isDraft == false) | .tagName' 2>/dev/null || true
         }
 
-        # The 2.x beta and 3.x alpha lines share one appcast but not a
-        # monotonic build number, so generate_appcast must see only one line.
+        # Major versions share one appcast and channel but not a monotonic build
+        # number, so generate_appcast must see only one line: a 2.x beta after
+        # 3.x betas was written as nothing.
         channel_of_tag() {
           case "$1" in
             *-alpha.*|*-nightly.*) echo alpha ;;
@@ -320,7 +321,15 @@ runs:
             *) echo stable ;;
           esac
         }
-        release_line="${CHANNEL:-stable}"
+        major_of_tag() {
+          local version="${1#v}"
+          echo "${version%%.*}"
+        }
+        line_of_tag() {
+          local tag="$1"
+          echo "$(channel_of_tag "$tag")/$(major_of_tag "$tag")"
+        }
+        release_line="${CHANNEL:-stable}/$(major_of_tag "$TAG")"
 
         # Fetch prior ZIPs only with an existing appcast; on a stub, generate_appcast
         # --channel would retag them as the current channel.
@@ -362,7 +371,7 @@ runs:
               fi
               list_prior_tags "$CALLER_REPO" "$GH_TOKEN"
             } | awk 'NF && !seen[$0]++' | while IFS= read -r prior_tag; do
-              if [[ "$(channel_of_tag "$prior_tag")" == "$release_line" ]]; then
+              if [[ "$(line_of_tag "$prior_tag")" == "$release_line" ]]; then
                 printf '%s\n' "$prior_tag"
               fi
             done
@@ -375,7 +384,7 @@ runs:
             staged_base="$(basename "$staged_zip")"
             staged_tag="${staged_base#"$ASSET_PREFIX"_}"
             staged_tag="${staged_tag%.zip}"
-            staged_line="$(channel_of_tag "$staged_tag")"
+            staged_line="$(line_of_tag "$staged_tag")"
             if [[ "$staged_line" != "$release_line" ]]; then
               echo "Dropping cross-line archive $staged_base ($staged_line != $release_line)"
               rm -f "$staged_zip"
