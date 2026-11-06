@@ -326,7 +326,8 @@ runs:
           echo "${version%%.*}"
         }
         line_of_tag() {
-          echo "$(channel_of_tag "$1")/$(major_of_tag "$1")"
+          local tag="$1"
+          echo "$(channel_of_tag "$tag")/$(major_of_tag "$tag")"
         }
         release_line="${CHANNEL:-stable}/$(major_of_tag "$TAG")"
 

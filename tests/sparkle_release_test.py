@@ -42,6 +42,13 @@ class ReleaseLineTest(unittest.TestCase):
         self.assertNotEqual(line_of("2.2.0-beta.2"), line_of("3.0.0-beta.6"))
         self.assertEqual(line_of("2.2.0-beta.2"), line_of("2.2.0-beta.1"))
 
+    def test_both_filters_compare_whole_release_lines(self):
+        # A filter that compared channels alone would let 3.x betas back into a 2.x run.
+        text = ACTION.read_text()
+        self.assertIn('[[ "$(line_of_tag "$prior_tag")" == "$release_line" ]]', text)
+        self.assertIn('staged_line="$(line_of_tag "$staged_tag")"', text)
+        self.assertNotRegex(text, r'channel_of_tag "\$(prior|staged)_tag"')
+
     def test_the_release_line_uses_the_tag_major_version(self):
         self.assertRegex(
             ACTION.read_text(),
