@@ -1,0 +1,110 @@
+name: ci-tools image
+
+# App repositories pin the image by the digest the publish job prints in its summary.
+
+on:
+  pull_request:
+    paths:
+      - "images/ci-tools/**"
+      - ".github/workflows/ci-tools-image.yml"
+  push:
+    branches: [main]
+    paths:
+      - "images/ci-tools/**"
+      - ".github/workflows/ci-tools-image.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-tools-image-${{ github.head_ref || github.ref }}
+  # A newer pull request run replaces an older one; a publish always finishes.
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+env:
+  IMAGE: ghcr.io/thaw-app/ci-tools
+
+jobs:
+  # Pull requests build without publishing, so this job needs no write access.
+  test:
+    if: github.repository == 'thaw-app/org-ci' && github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      # The Dockerfile checks every tool's version as its last build step.
+      - name: Build the image
+        run: docker build --pull --platform linux/amd64 --tag ci-tools:test images/ci-tools
+
+      # Git refuses a repository another user owns, so this proves the image's user matches the runner's.
+      - name: Read the checkout as the image's user
+        run: docker run --rm --volume "$PWD:/work" --workdir /work ci-tools:test git status --short
+
+  publish:
+    if: >-
+      github.repository == 'thaw-app/org-ci'
+      && github.event_name != 'pull_request'
+      && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+      id-token: write
+      attestations: write
+    outputs:
+      digest: ${{ steps.push.outputs.digest }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Build the image
+        run: |
+          docker build --pull --platform linux/amd64 \
+            --label "org.opencontainers.image.revision=${GITHUB_SHA}" \
+            --tag "${IMAGE}:sha-${GITHUB_SHA}" \
+            --tag "${IMAGE}:main" \
+            images/ci-tools
+
+      - name: Log in to the GitHub Container Registry
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: echo "$GITHUB_TOKEN" | docker login ghcr.io --username "$GITHUB_ACTOR" --password-stdin
+
+      - name: Push the image
+        id: push
+        shell: bash
+        run: |
+          set -euo pipefail
+          docker push "${IMAGE}:sha-${GITHUB_SHA}"
+          docker push "${IMAGE}:main"
+          digest=$(docker inspect --format '{{index .RepoDigests 0}}' "${IMAGE}:sha-${GITHUB_SHA}")
+          digest=${digest#*@}
+          if [[ "$digest" != sha256:* ]]; then
+            echo "::error::Could not read the pushed image's digest (got '$digest')."
+            exit 1
+          fi
+          echo "digest=$digest" >> "$GITHUB_OUTPUT"
+          {
+            echo "### ghcr.io/thaw-app/ci-tools"
+            echo
+            echo "Pin it in an app repository's workflow:"
+            echo
+            echo '```yaml'
+            echo "container: ${IMAGE}@${digest} # sha-${GITHUB_SHA}"
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Attest the image's build provenance
+        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
+        with:
+          subject-name: ${{ env.IMAGE }}
+          subject-digest: ${{ steps.push.outputs.digest }}
+          push-to-registry: true
+
+      - name: Log out of the registry
+        if: always()
+        run: docker logout ghcr.io
