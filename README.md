@@ -481,6 +481,42 @@ cosign verify-blob --bundle App.dmg.sigstore.json \
   App.dmg
 ```
 
+## Container images
+
+### ci-tools
+
+`ghcr.io/thaw-app/ci-tools` holds the tools the Linux CI jobs install, at the
+versions the app repositories pin: SwiftLint, SwiftFormat, actionlint,
+OSV-Scanner, Python 3 and Git. A job that runs in it downloads nothing.
+`images/ci-tools/Dockerfile` lists the versions and checks each download
+against its SHA-256. The image is built for `linux/amd64` only.
+
+`.github/workflows/ci-tools-image.yml` builds the image on a pull request that
+changes it and publishes it from `main`, tagged `sha-<commit>` and `main`, with
+a build provenance attestation. The run's summary prints the digest to pin.
+
+Pin the image by its digest, since the tags move:
+
+```yaml
+static_analysis:
+  runs-on: ubuntu-latest
+  container: ghcr.io/thaw-app/ci-tools@sha256:<digest> # sha-<commit>
+  steps:
+    - uses: actions/checkout@<sha>
+      with:
+        fetch-depth: 0
+        persist-credentials: false
+    - run: sh scripts/lint.sh --strict
+    - run: sh scripts/format.sh --lint
+```
+
+A job's steps run as root in the container while the checkout belongs to the
+runner's user, so the image marks every directory as a safe Git directory.
+
+To change a tool's version, update its version and SHA-256 in the Dockerfile.
+Take the SHA-256 from the release's checksum file, or download the asset and
+run `shasum -a 256` on it.
+
 ## Job contract
 
 The build actions in a ship pipeline **must run in the same job** (shared `$RUNNER_TEMP` keychain, exported app, Sparkle env).
