@@ -55,7 +55,7 @@ SHELL ["/bin/bash", "-euo", "pipefail", "-c"]
 RUN swiftlint version \
     && [ "$(swiftformat --version)" = "${SWIFTFORMAT_VERSION}" ] \
     && [ "$(actionlint -version | head -n 1)" = "${ACTIONLINT_VERSION}" ] \
-    && osv-scanner --version | grep -q "osv-scanner version: ${OSV_SCANNER_VERSION}" \
+    && osv-scanner --version | grep -F "osv-scanner version: ${OSV_SCANNER_VERSION}" > /dev/null \
     && python3 --version \
     && git --version
 
