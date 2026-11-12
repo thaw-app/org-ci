@@ -510,8 +510,9 @@ static_analysis:
     - run: sh scripts/format.sh --lint
 ```
 
-A job's steps run as root in the container while the checkout belongs to the
-runner's user, so the image marks every directory as a safe Git directory.
+The image runs as UID 1001, the user of GitHub-hosted runners, so a job owns
+its checkout and Git accepts it without running as root. On a runner with
+another UID, set `options: --user <uid>` on the container.
 
 To change a tool's version, update its version and SHA-256 in the Dockerfile.
 Take the SHA-256 from the release's checksum file, or download the asset and

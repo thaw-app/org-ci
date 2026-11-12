@@ -39,6 +39,10 @@ jobs:
       - name: Build the image
         run: docker build --pull --platform linux/amd64 --tag ci-tools:test images/ci-tools
 
+      # Git refuses a repository another user owns, so this proves the image's user matches the runner's.
+      - name: Read the checkout as the image's user
+        run: docker run --rm --volume "$PWD:/work" --workdir /work ci-tools:test git status --short
+
   publish:
     if: >-
       github.repository == 'thaw-app/org-ci'
