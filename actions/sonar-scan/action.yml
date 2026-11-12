@@ -1,8 +1,8 @@
 name: Sonar Scan
 description: >-
   Run the SonarQube Cloud scan with the coverage this run built, or with the
-  last cached coverage when the run skipped the build. Run it after a checkout
-  with fetch-depth 0.
+  last cached coverage when a push skipped the build. A pull request that
+  changes no code is not scanned. Run it after a checkout with fetch-depth 0.
 
 inputs:
   sonar-token:
@@ -40,10 +40,17 @@ runs:
         name: ${{ inputs.artifact-name }}
         path: ${{ inputs.artifact-path }}
 
-    # Docs/chore scans skip the build, so reuse the last cached report rather than
+    # A pull request that changes no code has nothing for Sonar to judge, and the
+    # newest cached report can predate its base, whose line numbers fail the scan.
+    - name: Skip a pull request without code changes
+      if: inputs.code-changed != 'true' && startsWith(github.event_name, 'pull_request')
+      shell: bash
+      run: echo "No code changed in this pull request; nothing for Sonar to analyze."
+
+    # Docs/chore pushes skip the build, so reuse the last cached report rather than
     # let Sonar publish 0%.
     - name: Restore cached coverage
-      if: inputs.code-changed != 'true'
+      if: inputs.code-changed != 'true' && !startsWith(github.event_name, 'pull_request')
       uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
       with:
         path: ${{ inputs.cache-path }}
@@ -65,6 +72,7 @@ runs:
 
     - name: Resolve Sonar coverage args
       id: coverage
+      if: inputs.code-changed == 'true' || !startsWith(github.event_name, 'pull_request')
       shell: bash
       env:
         REPORTS: ${{ inputs.reports }}

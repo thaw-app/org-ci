@@ -186,5 +186,45 @@ class CoverageArgsTest(unittest.TestCase):
         self.assertIn("::error::", result.stderr)
 
 
+
+SONAR_ACTION = ACTIONS / "sonar-scan/action.yml"
+
+
+def step_condition(name):
+    lines = SONAR_ACTION.read_text().splitlines()
+    start = lines.index(f"    - name: {name}")
+    for line in lines[start + 1:]:
+        if line.startswith("    - name:"):
+            return None
+        if line.startswith("      if: "):
+            return line[len("      if: "):]
+    return None
+
+
+class SonarScanStepsTest(unittest.TestCase):
+    # A docs-only pull request restored an older base's report, and the scan failed
+    # on line numbers the files no longer had.
+    def test_a_pull_request_without_code_restores_no_cached_report(self):
+        condition = step_condition("Restore cached coverage")
+        self.assertIn("inputs.code-changed != 'true'", condition)
+        self.assertIn("!startsWith(github.event_name, 'pull_request')", condition)
+
+    def test_a_pull_request_without_code_resolves_no_report_so_the_scan_is_skipped(self):
+        self.assertEqual(
+            step_condition("Resolve Sonar coverage args"),
+            "inputs.code-changed == 'true' || !startsWith(github.event_name, 'pull_request')",
+        )
+        self.assertEqual(
+            step_condition("SonarQube Scan"),
+            "inputs.code-changed == 'true' || steps.coverage.outputs.args != ''",
+        )
+
+    def test_a_skipped_pull_request_says_why(self):
+        self.assertEqual(
+            step_condition("Skip a pull request without code changes"),
+            "inputs.code-changed != 'true' && startsWith(github.event_name, 'pull_request')",
+        )
+
+
 if __name__ == "__main__":
     unittest.main()
