@@ -514,6 +514,11 @@ The image runs as UID 1001, the user of GitHub-hosted runners, so a job owns
 its checkout and Git accepts it without running as root. On a runner with
 another UID, set `options: --user <uid>` on the container.
 
+Dependabot proposes updates to the SwiftLint base image. The app repositories
+check SwiftLint's version against `.swiftlint-version`, so a new SwiftLint
+release reaches them only when that pin moves with the image's digest.
+SwiftFormat, actionlint and OSV-Scanner are updated by hand in the Dockerfile.
+
 To change a tool's version, update its version and SHA-256 in the Dockerfile.
 Take the SHA-256 from the release's checksum file, or download the asset and
 run `shasum -a 256` on it.
