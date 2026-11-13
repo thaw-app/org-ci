@@ -52,13 +52,15 @@ COPY --from=fetch /out/ /usr/local/bin/
 
 SHELL ["/bin/bash", "-euo", "pipefail", "-c"]
 
-# A missing tool or a wrong version fails the image build.
+# A missing tool or a wrong version fails the image build. The base image's build left a
+# root-owned SwiftLint cache in /var/tmp/SwiftLint, which the runner user could not write.
 RUN swiftlint version \
     && [ "$(swiftformat --version)" = "${SWIFTFORMAT_VERSION}" ] \
     && [ "$(actionlint -version | head -n 1)" = "${ACTIONLINT_VERSION}" ] \
     && osv-scanner --version | grep -F "osv-scanner version: ${OSV_SCANNER_VERSION}" > /dev/null \
     && python3 --version \
-    && git --version
+    && git --version \
+    && rm -rf /var/tmp/SwiftLint
 
 USER runner
 
