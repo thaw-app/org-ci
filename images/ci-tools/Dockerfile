@@ -1,10 +1,11 @@
 # Linux CI tools for the thaw-app repositories. Keep the versions in step with
 # .swiftlint-version, .swiftformat-version and the org-ci action defaults.
 
-# SwiftLint 0.65.1. SwiftLint needs the Swift runtime libraries this base image carries.
-ARG SWIFTLINT_IMAGE=ghcr.io/realm/swiftlint@sha256:f47e083201e47a136cda5ae847595bfe00226c444ca226fa74fa5dc648a9b057
+# SwiftLint needs the Swift runtime libraries this base image carries. Dependabot updates
+# this line only with both the tag and the digest on it, so Sonar's docker:S8431 is accepted here.
+FROM ghcr.io/realm/swiftlint:0.65.1@sha256:f47e083201e47a136cda5ae847595bfe00226c444ca226fa74fa5dc648a9b057 AS base
 
-FROM ${SWIFTLINT_IMAGE} AS fetch
+FROM base AS fetch
 
 ARG SWIFTFORMAT_VERSION=0.64.6
 ARG ACTIONLINT_VERSION=1.7.12
@@ -31,7 +32,7 @@ RUN apt-get update \
     && install -D -m 0755 actionlint /out/actionlint \
     && install -D -m 0755 osv-scanner /out/osv-scanner
 
-FROM ${SWIFTLINT_IMAGE}
+FROM base
 
 ARG SWIFTFORMAT_VERSION=0.64.6
 ARG ACTIONLINT_VERSION=1.7.12
