@@ -551,7 +551,7 @@ another UID, set `options: --user <uid>` on the container.
 Dependabot proposes updates to the SwiftLint base image. The app repositories
 check SwiftLint's version against `.swiftlint-version`, so a new SwiftLint
 release reaches them only when that pin moves with the image's digest.
-SwiftFormat, actionlint and OSV-Scanner are updated by hand in the Dockerfile.
+SwiftFormat, actionlint, zizmor and OSV-Scanner are updated by hand in the Dockerfile.
 
 To change a tool's version, update its version and SHA-256 in the Dockerfile.
 Take the SHA-256 from the release's checksum file, or download the asset and
