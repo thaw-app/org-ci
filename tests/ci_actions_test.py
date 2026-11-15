@@ -1,4 +1,5 @@
 import os
+import re
 import subprocess
 import tempfile
 import unittest
@@ -224,6 +225,112 @@ class SonarScanStepsTest(unittest.TestCase):
             step_condition("Skip a pull request without code changes"),
             "inputs.code-changed != 'true' && startsWith(github.event_name, 'pull_request')",
         )
+
+
+ZIZMOR_ACTION = ACTIONS / "zizmor/action.yml"
+ZIZMOR_RUN = ACTIONS / "zizmor/run.sh"
+DOCKERFILE = Path(__file__).parent.parent / "images/ci-tools/Dockerfile"
+
+# Stands in for zizmor: records its arguments and GH_TOKEN, prints a report and
+# exits with FAKE_STATUS.
+FAKE_ZIZMOR = """#!/usr/bin/env bash
+printf '%s\\n' "$@" > "$FAKE_ARGS"
+printf '%s' "${GH_TOKEN-unset}" > "$FAKE_TOKEN"
+echo "report"
+exit "${FAKE_STATUS:-0}"
+"""
+
+
+class ZizmorRunTest(unittest.TestCase):
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.dir = Path(self.tmp.name)
+        self.fake = self.dir / "zizmor"
+        self.fake.write_text(FAKE_ZIZMOR)
+        self.fake.chmod(0o755)
+
+    def tearDown(self):
+        self.tmp.cleanup()
+
+    def zizmor(self, *args, **env):
+        defaults = {"ZIZMOR": str(self.fake), "PATHS": ".", "PERSONA": "regular",
+                    "MIN_SEVERITY": "", "CONFIG": "", "GH_TOKEN": "token",
+                    "FAKE_ARGS": str(self.dir / "args"), "FAKE_TOKEN": str(self.dir / "token")}
+        return subprocess.run(
+            ["bash", str(ZIZMOR_RUN), *args],
+            cwd=self.dir,
+            env={**os.environ, **defaults, **env},
+            capture_output=True,
+            text=True,
+        )
+
+    def args(self):
+        return (self.dir / "args").read_text().splitlines()
+
+    def test_the_audit_passes_the_persona_and_the_paths(self):
+        result = self.zizmor("plain", PATHS="  .github/workflows\n\n  actions/build/action.yml\n")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(self.args(), [
+            "--format", "plain", "--no-progress", "--persona", "regular",
+            "--", ".github/workflows", "actions/build/action.yml",
+        ])
+        self.assertEqual((self.dir / "token").read_text(), "token")
+
+    def test_a_severity_and_a_config_are_passed_when_set(self):
+        self.zizmor("plain", MIN_SEVERITY="medium", CONFIG="ci/zizmor.yml")
+        self.assertEqual(self.args()[3:9], [
+            "--persona", "regular", "--min-severity", "medium", "--config", "ci/zizmor.yml",
+        ])
+
+    def test_no_token_runs_the_offline_audits_only(self):
+        self.zizmor("plain", GH_TOKEN="")
+        self.assertIn("--offline", self.args())
+        self.assertEqual((self.dir / "token").read_text(), "unset")
+
+    def test_a_finding_fails_the_audit(self):
+        result = self.zizmor("plain", FAKE_STATUS="13")
+        self.assertEqual(result.returncode, 13)
+
+    def test_the_sarif_report_goes_to_the_file(self):
+        report = self.dir / "out.sarif"
+        result = self.zizmor("sarif", str(report))
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(report.read_text(), "report\n")
+        self.assertEqual(self.args()[:2], ["--format", "sarif"])
+
+    def test_no_paths_is_an_error(self):
+        result = self.zizmor("plain", PATHS=" \n")
+        self.assertEqual(result.returncode, 1)
+        self.assertIn("::error::", result.stderr)
+        self.assertFalse((self.dir / "args").exists())
+
+
+class ZizmorActionTest(unittest.TestCase):
+    def test_forks_and_dependabot_never_upload(self):
+        text = ZIZMOR_ACTION.read_text()
+        start = text.index("    - name: Upload SARIF")
+        condition = text[start:text.index("      uses:", start)]
+        self.assertIn("inputs.upload-sarif == 'true'", condition)
+        self.assertIn("github.actor != 'dependabot[bot]'", condition)
+        self.assertIn(
+            "(github.event_name != 'pull_request' || "
+            "github.event.pull_request.head.repo.full_name == github.repository)",
+            condition,
+        )
+
+    def test_the_image_and_the_action_pin_the_same_release(self):
+        action = ZIZMOR_ACTION.read_text()
+        version = re.search(r'zizmor-version:\n(?:.*\n)*?    default: "([^"]+)"', action).group(1)
+        sha256 = re.search(r"zizmor-sha256:\n(?:.*\n)*?    default: ([0-9a-f]{64})", action).group(1)
+        dockerfile = DOCKERFILE.read_text()
+        self.assertIn(f"ARG ZIZMOR_VERSION={version}\n", dockerfile)
+        self.assertIn(
+            f"ADD --checksum=sha256:{sha256} \\\n"
+            "    https://github.com/zizmorcore/zizmor/releases/download/v${ZIZMOR_VERSION}/"
+            "zizmor-x86_64-unknown-linux-gnu.tar.gz",
+            dockerfile,
+        )
+        self.assertIn('[ "$(zizmor --version)" = "zizmor ${ZIZMOR_VERSION}" ]', dockerfile)
 
 
 if __name__ == "__main__":
