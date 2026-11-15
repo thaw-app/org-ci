@@ -18165,6 +18165,59 @@ class FileChangelogReader {
   }
 }
 
+// actions/release-notes/src/changelog-section.ts
+function findChangelogSection(content, tag) {
+  const lines = content.replace(/^﻿/, "").split(/\r?\n/);
+  const sectionLines = [];
+  let collecting = false;
+  let fence = null;
+  for (const line of lines) {
+    const wasFenced = fence !== null;
+    fence = fenceAfter(fence, line);
+    const isCode = wasFenced || fence !== null;
+    if (!collecting) {
+      collecting = !isCode && isReleaseHeading(line, tag);
+      continue;
+    }
+    if (!isCode && /^##(?:[\t ]|$)/.test(line))
+      break;
+    sectionLines.push(line);
+  }
+  if (!collecting)
+    return;
+  return sectionLines.join(`
+`).trim();
+}
+function fenceAfter(fence, line) {
+  const marker = /^ {0,3}(`{3,}|~{3,})/.exec(line);
+  if (marker === null)
+    return fence;
+  const opening = marker[0].trimStart();
+  if (fence === null)
+    return opening;
+  const closes = opening.startsWith(fence.charAt(0)) && opening.length >= fence.length && /^ {0,3}(`+|~+)\s*$/.test(line);
+  return closes ? null : fence;
+}
+function isReleaseHeading(line, tag) {
+  const prefix = /^##[\t ]+/.exec(line);
+  if (prefix === null)
+    return false;
+  const heading = line.slice(prefix[0].length);
+  const candidates = [
+    tag,
+    `[${tag}]`,
+    String.raw`\[${tag}]`,
+    String.raw`[${tag}\]`,
+    String.raw`\[${tag}\]`
+  ];
+  return candidates.some((candidate) => {
+    if (!heading.startsWith(candidate))
+      return false;
+    const suffix = heading.slice(candidate.length);
+    return suffix.length === 0 || /^[\t ]/.test(suffix);
+  });
+}
+
 // actions/release-notes/src/release-notes-resolver.ts
 class ReleaseNotesResolver {
   changelogReader;
@@ -18182,70 +18235,19 @@ class ReleaseNotesResolver {
       return { kind: "missing", reason: "changelog-not-found" };
     }
     const { path, content } = readResult.changelog;
-    const section = this.extractSection(content, request.tag);
-    if (section.kind === "missing") {
+    const body = findChangelogSection(content, request.tag);
+    if (body === undefined) {
       return { kind: "missing", reason: "section-not-found", path };
     }
-    if (section.body.length === 0) {
+    if (body.length === 0) {
       return { kind: "missing", reason: "section-empty", path };
     }
-    return { kind: "resolved", body: section.body, source: { kind: "changelog", path } };
+    return { kind: "resolved", body, source: { kind: "changelog", path } };
   }
   validateTag(tag) {
     if (tag.trim().length === 0 || /[\r\n\0]/.test(tag)) {
       throw new Error("tag must be a nonempty single-line value");
     }
-  }
-  extractSection(content, tag) {
-    const lines = content.replace(/^\uFEFF/, "").split(/\r?\n/);
-    const sectionLines = [];
-    let collecting = false;
-    let fence = null;
-    for (const line of lines) {
-      const wasFenced = fence !== null;
-      fence = this.fenceAfter(fence, line);
-      const isCode = wasFenced || fence !== null;
-      if (!collecting) {
-        collecting = !isCode && this.isReleaseHeading(line, tag);
-        continue;
-      }
-      if (!isCode && /^##(?:[\t ]|$)/.test(line))
-        break;
-      sectionLines.push(line);
-    }
-    if (!collecting)
-      return { kind: "missing" };
-    return { kind: "found", body: sectionLines.join(`
-`).trim() };
-  }
-  fenceAfter(fence, line) {
-    const marker = /^ {0,3}(`{3,}|~{3,})/.exec(line);
-    if (marker === null)
-      return fence;
-    const opening = marker[0].trimStart();
-    if (fence === null)
-      return opening;
-    const closes = opening.startsWith(fence.charAt(0)) && opening.length >= fence.length && /^ {0,3}(`+|~+)\s*$/.test(line);
-    return closes ? null : fence;
-  }
-  isReleaseHeading(line, tag) {
-    const prefix = /^##[\t ]+/.exec(line);
-    if (prefix === null)
-      return false;
-    const heading = line.slice(prefix[0].length);
-    const candidates = [
-      tag,
-      `[${tag}]`,
-      String.raw`\[${tag}]`,
-      String.raw`[${tag}\]`,
-      String.raw`\[${tag}\]`
-    ];
-    return candidates.some((candidate) => {
-      if (!heading.startsWith(candidate))
-        return false;
-      const suffix = heading.slice(candidate.length);
-      return suffix.length === 0 || /^[\t ]/.test(suffix);
-    });
   }
 }
 
