@@ -486,7 +486,7 @@ cosign verify-blob --bundle App.dmg.sigstore.json \
 ### ci-tools
 
 `ghcr.io/thaw-app/ci-tools` holds the tools the Linux CI jobs install, at the
-versions the app repositories pin: SwiftLint, SwiftFormat, actionlint,
+versions the app repositories pin: SwiftLint, SwiftFormat, actionlint, zizmor,
 OSV-Scanner, Python 3 and Git. A job that runs in it downloads nothing.
 `images/ci-tools/Dockerfile` lists the versions and checks each download
 against its SHA-256. The image is built for `linux/amd64` only.
