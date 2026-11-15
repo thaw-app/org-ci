@@ -9,8 +9,7 @@ export interface ChangelogEntry {
 
 const ITEM = /^ {0,3}(?:[-*+]|\d{1,9}[.)])(?:[\t ]+|$)/;
 
-// Lists the top-level list items of a release section that sit under one of
-// `sections` (compared without case). A `####` heading keeps the `###` it is in.
+// Lists the top-level list items under one of `sections` (compared without case); a `####` keeps its `###`.
 // Prose, quotes and anything before the first `###` are never entries.
 export function listEntries(body: string, sections: readonly string[]): ChangelogEntry[] {
   const wanted = new Set(sections.map((name) => name.trim().toLowerCase()));

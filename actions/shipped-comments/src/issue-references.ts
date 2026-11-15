@@ -1,7 +1,5 @@
-// Finds the issue numbers a changelog entry refers to in the calling
-// repository, in the order they appear: issue links, `owner/repo#N` and bare
-// `#N`. Pull request links and references to other repositories are left out.
-// A bare `#N` can still be a pull request; the caller asks the API.
+// Issue numbers an entry names in the calling repository, in order: issue links, `owner/repo#N`, bare `#N`.
+// Pull request links and other repositories are left out; a bare `#N` can be a pull request, so the caller asks the API.
 export function issueNumbersIn(text: string, repository: string, serverUrl: string): number[] {
   const found: { readonly at: number; readonly number: number }[] = [];
   const add = (at: number, value: string | undefined): void => {
