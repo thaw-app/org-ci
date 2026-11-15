@@ -39,6 +39,7 @@ uses: thaw-app/org-ci/actions/publish-file-to-branch@<sha>
 | `actions/block-translation-prs` | Close a pull request that only edits String Catalogs and point to Crowdin |
 | `actions/pr-build-command` | Run a build workflow on a pull request's branch when a maintainer comments `.build` |
 | `actions/remove-skipped-runs` | Delete the repository's skipped workflow runs |
+| `actions/shipped-comments` | Comment on each issue a release's changelog section names, with the version that shipped it (TypeScript, bundled for Node 24) |
 
 ### Sparkle updates repository
 
@@ -230,6 +231,76 @@ be older than the workflow's own local actions, so the action sets
     project-name: MyApp.xcodeproj
     target-name: MyApp
 ```
+
+### Telling issues which release shipped them
+
+An issue closes when its fix merges, before any build has it. `shipped-comments`
+reads the release's changelog section with the same lookup as `release-notes`,
+and comments once on each issue of the calling repository that an entry under
+New, Changed or Fixed refers to. The comment quotes the entries, names the
+version and its channel, and links the release:
+
+```markdown
+<!-- shipped-in 3.0.0-alpha.14 -->
+The change below shipped in Thaw [3.0.0-alpha.14](https://github.com/thaw-app/Thaw/releases/tag/3.0.0-alpha.14), an alpha release.
+
+> **Layout warns when items don't fit or macOS hides Focus,** with a one-click fix for each. Reported by @&#8203;JosefGvirt in [#1477](https://github.com/thaw-app/Thaw/issues/1477).
+```
+
+An entry counts when it is a list item under one of `sections`, including under
+a `####` area heading. The lead paragraph, Known issues and other sections never
+do. It reads issue links, `owner/repo#N` and bare `#N`. Pull request links and
+other repositories are skipped, and a bare `#N` is looked up, so a pull request
+is skipped too. Several entries for one issue share one comment. The channel is
+the tag's first pre-release identifier: `alpha`, `beta`, `rc`, or `stable` for
+a tag without one. Mentions in the quotes carry a zero-width space, so the
+comment does not notify every contributor named in them.
+
+The first line marks the tag, so running it again for the same tag updates its
+comment, or leaves it alone when nothing changed. It only comments: it never
+closes, reopens, labels, assigns or edits an issue, and it comments on open and
+closed issues alike. A locked, deleted or transferred issue is skipped with a
+log line. `dry-run` logs every comment and posts nothing. When a release would
+post or update more than `max-comments` (default 50) comments, it fails before
+posting any. Thaw's 2.1.0 section, which gathered its betas, names 43 numbers,
+some of them pull requests.
+
+Run it after the release is public, so the link works, in a job with
+`issues: write` that checks out the tag:
+
+```yaml
+comment-shipped:
+  needs: [meta, release]
+  if: ${{ !inputs.dry_run && inputs.publish_release }}
+  runs-on: ubuntu-latest
+  permissions:
+    contents: read
+    issues: write
+  steps:
+    - uses: actions/checkout@<sha>
+      with:
+        ref: refs/tags/${{ needs.meta.outputs.tag }}
+        persist-credentials: false
+    - uses: thaw-app/org-ci/actions/shipped-comments@<sha>
+      with:
+        tag: ${{ needs.meta.outputs.tag }}
+        product-name: MyApp
+```
+
+| Input | Default | Purpose |
+| --- | --- | --- |
+| `tag` | required | Release tag; letters, digits and `._+-` |
+| `changelog-paths` | `CHANGELOG.md` | Changelog files to look in, one per line; the first that exists is read |
+| `sections` | `New`, `Changed`, `Fixed` | `###` sections whose entries count, one per line, any case |
+| `product-name` | empty | Put before the version, such as `Thaw` |
+| `release-url` | the caller's release for the tag | Link in the comment |
+| `dry-run` | `false` | Log the comments, post nothing |
+| `max-comments` | `50` | Fail without posting when more comments would be written |
+| `token` | `github.token` | Needs `issues: write` |
+
+Outputs: `commented`, the issues that got a new or updated comment (or would
+have in a dry run), and `skipped`, the numbers skipped as pull requests or
+locked, missing or moved issues. Both are space-separated.
 
 ## Reusable workflows
 
@@ -542,6 +613,7 @@ without network access.
 - Release / Sparkle publish on the caller repo: `permissions: contents: write` (DMG / GitHub Release)
 - Dedicated updates feed: a PAT or GitHub App token with `contents: write` on the updates repo (`updates-token`), plus caller `contents: write` for the DMG release
 - Read-only DMG builds can omit write if they only upload artifacts
+- `shipped-comments`: `issues: write` on the caller repo
 
 ### Concurrency
 
