@@ -3,6 +3,7 @@
 <p>
   <a href="https://github.com/thaw-app/org-ci/actions/workflows/test-actions.yml?query=branch%3Amain"><picture><source media="(prefers-color-scheme: dark)" srcset="https://shieldcn.dev/github/ci/thaw-app/org-ci.svg?workflow=test-actions.yml&amp;branch=main&amp;label=TESTS&amp;variant=ghost&amp;font=geist-mono&amp;mode=dark" /><img alt="Tests" src="https://shieldcn.dev/github/ci/thaw-app/org-ci.svg?workflow=test-actions.yml&amp;branch=main&amp;label=TESTS&amp;variant=ghost&amp;font=geist-mono&amp;mode=light" /></picture></a>
   <a href="https://github.com/thaw-app/org-ci/actions/workflows/actionlint.yml?query=branch%3Amain"><picture><source media="(prefers-color-scheme: dark)" srcset="https://shieldcn.dev/github/ci/thaw-app/org-ci.svg?workflow=actionlint.yml&amp;branch=main&amp;label=ACTIONLINT&amp;variant=ghost&amp;font=geist-mono&amp;mode=dark" /><img alt="actionlint" src="https://shieldcn.dev/github/ci/thaw-app/org-ci.svg?workflow=actionlint.yml&amp;branch=main&amp;label=ACTIONLINT&amp;variant=ghost&amp;font=geist-mono&amp;mode=light" /></picture></a>
+  <a href="https://github.com/thaw-app/org-ci/actions/workflows/zizmor.yml?query=branch%3Amain"><picture><source media="(prefers-color-scheme: dark)" srcset="https://shieldcn.dev/github/ci/thaw-app/org-ci.svg?workflow=zizmor.yml&amp;branch=main&amp;label=ZIZMOR&amp;variant=ghost&amp;font=geist-mono&amp;mode=dark" /><img alt="zizmor" src="https://shieldcn.dev/github/ci/thaw-app/org-ci.svg?workflow=zizmor.yml&amp;branch=main&amp;label=ZIZMOR&amp;variant=ghost&amp;font=geist-mono&amp;mode=light" /></picture></a>
   <a href="https://sonarcloud.io/summary/new_code?id=thaw-app_org-ci"><picture><source media="(prefers-color-scheme: dark)" srcset="https://shieldcn.dev/sonar/quality-gate/thaw-app_org-ci.svg?label=QUALITY%20GATE&amp;variant=ghost&amp;font=geist-mono&amp;mode=dark" /><img alt="SonarCloud quality gate" src="https://shieldcn.dev/sonar/quality-gate/thaw-app_org-ci.svg?label=QUALITY%20GATE&amp;variant=ghost&amp;font=geist-mono&amp;mode=light" /></picture></a>
 </p>
 
@@ -597,6 +598,10 @@ default 5).
 ### Tests
 
 Run `bun install --frozen-lockfile`, then `bun run typecheck`, `bun run test`, and `bun run check:dist`.
+
+`zizmor .` from the repository root audits this repository's workflows and
+actions with the ignores in `.github/zizmor.yml`. The `zizmor` workflow runs it
+in CI through `actions/zizmor`.
 
 On macOS, `python3 -m unittest discover -s tests -p '*_test.py' -v` tests the signing action scripts, the `dependency-sca` suppression check, the `checkout-source` deployment target lookup and the arguments `zizmor` passes.
 These tests use scratch directories and mock the archive and CMS boundaries; they need no signing credentials
