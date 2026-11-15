@@ -1,9 +1,7 @@
 #!/usr/bin/env bash
-# Runs zizmor. "plain" prints the findings and exits with zizmor's status, which
-# is not zero when a finding is left. "sarif <file>" writes the SARIF report to
-# <file> and fails only when zizmor itself fails. Reads ZIZMOR, PATHS, PERSONA,
-# MIN_SEVERITY, CONFIG and GH_TOKEN from the environment; an empty GH_TOKEN
-# runs the offline audits only.
+# "plain" prints the findings and exits with zizmor's status, not zero when a finding is left.
+# "sarif <file>" writes the report and fails only when zizmor itself fails.
+# An empty GH_TOKEN runs the offline audits only.
 set -euo pipefail
 
 format="${1:?usage: run.sh plain | run.sh sarif <file>}"

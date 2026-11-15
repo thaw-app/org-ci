@@ -224,7 +224,7 @@ to code scanning. The job needs `contents: read`, `actions: read` and
 `security-events: write`. A pull request from a fork, or from Dependabot, gets a
 token that cannot write security events, so the action skips the upload for
 them with the same rule as `SONAR_ENABLED` above; the audit still runs and
-fails the job.
+still fails the job on a finding.
 
 ```yaml
 zizmor:

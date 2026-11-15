@@ -59,7 +59,6 @@ runs:
         ZIZMOR_SHA256_LINUX_X64: ${{ inputs.zizmor-sha256 }}
       run: |
         set -euo pipefail
-        # The ci-tools image ships the pinned version.
         if command -v zizmor > /dev/null && [[ "$(zizmor --version)" == "zizmor ${ZIZMOR_VERSION}" ]]; then
           echo "path=$(command -v zizmor)" >> "$GITHUB_OUTPUT"
           zizmor --version
@@ -80,7 +79,7 @@ runs:
         echo "path=$dir/zizmor" >> "$GITHUB_OUTPUT"
         "$dir/zizmor" --version
 
-    # The SARIF run never fails on findings; the report below does.
+    # This run never fails on findings; the audit step below does.
     - name: Write the SARIF report
       id: sarif
       shell: bash
