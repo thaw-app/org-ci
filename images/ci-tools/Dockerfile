@@ -1,10 +1,11 @@
 # Linux CI tools for the thaw-app repositories. Keep the versions in step with
 # .swiftlint-version, .swiftformat-version and the org-ci action defaults.
 
-# SwiftLint 0.65.1. SwiftLint needs the Swift runtime libraries this base image carries.
-ARG SWIFTLINT_IMAGE=ghcr.io/realm/swiftlint@sha256:f47e083201e47a136cda5ae847595bfe00226c444ca226fa74fa5dc648a9b057
+# SwiftLint needs the Swift runtime libraries this base image carries. Dependabot updates
+# this line only with both the tag and the digest on it, so Sonar's docker:S8431 is accepted here.
+FROM ghcr.io/realm/swiftlint:0.65.1@sha256:f47e083201e47a136cda5ae847595bfe00226c444ca226fa74fa5dc648a9b057 AS base
 
-FROM ${SWIFTLINT_IMAGE} AS fetch
+FROM base AS fetch
 
 ARG SWIFTFORMAT_VERSION=0.64.6
 ARG ACTIONLINT_VERSION=1.7.12
@@ -37,7 +38,7 @@ RUN apt-get update \
     && install -D -m 0755 osv-scanner /out/osv-scanner \
     && install -D -m 0755 zizmor /out/zizmor
 
-FROM ${SWIFTLINT_IMAGE}
+FROM base
 
 ARG SWIFTFORMAT_VERSION=0.64.6
 ARG ACTIONLINT_VERSION=1.7.12
@@ -58,14 +59,16 @@ COPY --from=fetch /out/ /usr/local/bin/
 
 SHELL ["/bin/bash", "-euo", "pipefail", "-c"]
 
-# A missing tool or a wrong version fails the image build.
+# A missing tool or a wrong version fails the image build. The base image's build left a
+# root-owned SwiftLint cache in /var/tmp/SwiftLint, which the runner user could not write.
 RUN swiftlint version \
     && [ "$(swiftformat --version)" = "${SWIFTFORMAT_VERSION}" ] \
     && [ "$(actionlint -version | head -n 1)" = "${ACTIONLINT_VERSION}" ] \
     && osv-scanner --version | grep -F "osv-scanner version: ${OSV_SCANNER_VERSION}" > /dev/null \
     && [ "$(zizmor --version)" = "zizmor ${ZIZMOR_VERSION}" ] \
     && python3 --version \
-    && git --version
+    && git --version \
+    && rm -rf /var/tmp/SwiftLint
 
 USER runner
 
