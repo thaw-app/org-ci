@@ -60,7 +60,6 @@ runs:
           -o "$dest"
         echo "${OSV_SCANNER_SHA256_LINUX_AMD64}  ${dest}" | sha256sum -c -
         chmod +x "$dest"
-        echo "$bin" >> "$GITHUB_PATH"
         "$dest" --version
 
     - name: Scan dependencies (OSV)
@@ -70,6 +69,8 @@ runs:
         CONFIG: ${{ inputs.config }}
       run: |
         set -euo pipefail
+        # Called by its path: a GITHUB_PATH entry would reach the caller's later steps (zizmor github-env).
+        osv_scanner="$RUNNER_TEMP/osv-scanner-bin/osv-scanner"
         args=()
         while IFS= read -r lockfile; do
           [[ -n "$lockfile" ]] || continue
@@ -87,13 +88,13 @@ runs:
         # Always write reports, then exit with the scanner status so SARIF
         # upload can use if: always() while vulns still fail the job.
         set +e
-        osv-scanner scan source \
+        "$osv_scanner" scan source \
           "${args[@]}" \
           --config="$CONFIG" \
           --format=json \
           --output-file=results.json
         json_ec=$?
-        osv-scanner scan source \
+        "$osv_scanner" scan source \
           "${args[@]}" \
           --config="$CONFIG" \
           --format=sarif \

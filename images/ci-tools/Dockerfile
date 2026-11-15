@@ -10,6 +10,7 @@ FROM base AS fetch
 ARG SWIFTFORMAT_VERSION=0.64.6
 ARG ACTIONLINT_VERSION=1.7.12
 ARG OSV_SCANNER_VERSION=2.4.0
+ARG ZIZMOR_VERSION=1.32.0
 
 # ADD fails the build when a download's SHA-256 differs from --checksum.
 ADD --checksum=sha256:5b9b03a383409a4bf60b0cacd6b18fb36fc3fbacd8b8af156a2865b80ff20ebe \
@@ -21,6 +22,9 @@ ADD --checksum=sha256:8aca8db96f1b94770f1b0d72b6dddcb1ebb8123cb3712530b08cc387b3
 ADD --checksum=sha256:15314940c10d26af9c6649f150b8a47c1262e8fc7e17b1d1029b0e479e8ed8a0 \
     https://github.com/google/osv-scanner/releases/download/v${OSV_SCANNER_VERSION}/osv-scanner_linux_amd64 \
     /fetch/osv-scanner
+ADD --checksum=sha256:bb110cc765eca9cd7efb2e284a956be5974c60027b0970f16397d86208a9957b \
+    https://github.com/zizmorcore/zizmor/releases/download/v${ZIZMOR_VERSION}/zizmor-x86_64-unknown-linux-gnu.tar.gz \
+    /fetch/zizmor.tar.gz
 
 WORKDIR /fetch
 RUN apt-get update \
@@ -28,18 +32,21 @@ RUN apt-get update \
     && rm -rf /var/lib/apt/lists/* \
     && unzip -q swiftformat.zip \
     && tar -xzf actionlint.tar.gz actionlint \
+    && tar -xzf zizmor.tar.gz zizmor \
     && install -D -m 0755 swiftformat_linux /out/swiftformat \
     && install -D -m 0755 actionlint /out/actionlint \
-    && install -D -m 0755 osv-scanner /out/osv-scanner
+    && install -D -m 0755 osv-scanner /out/osv-scanner \
+    && install -D -m 0755 zizmor /out/zizmor
 
 FROM base
 
 ARG SWIFTFORMAT_VERSION=0.64.6
 ARG ACTIONLINT_VERSION=1.7.12
 ARG OSV_SCANNER_VERSION=2.4.0
+ARG ZIZMOR_VERSION=1.32.0
 
 LABEL org.opencontainers.image.source=https://github.com/thaw-app/org-ci
-LABEL org.opencontainers.image.description="SwiftLint, SwiftFormat, actionlint, OSV-Scanner, Python and Git for thaw-app CI"
+LABEL org.opencontainers.image.description="SwiftLint, SwiftFormat, actionlint, zizmor, OSV-Scanner, Python and Git for thaw-app CI"
 
 # actions/checkout needs git for a full clone; python3 runs the baseline and XCStrings checks.
 # UID 1001 is the GitHub-hosted runner's user, so the job owns its checkout without running as root.
@@ -58,6 +65,7 @@ RUN swiftlint version \
     && [ "$(swiftformat --version)" = "${SWIFTFORMAT_VERSION}" ] \
     && [ "$(actionlint -version | head -n 1)" = "${ACTIONLINT_VERSION}" ] \
     && osv-scanner --version | grep -F "osv-scanner version: ${OSV_SCANNER_VERSION}" > /dev/null \
+    && [ "$(zizmor --version)" = "zizmor ${ZIZMOR_VERSION}" ] \
     && python3 --version \
     && git --version \
     && rm -rf /var/tmp/SwiftLint

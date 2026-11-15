@@ -178,7 +178,9 @@ runs:
       env:
         SPARKLE_VERSION: ${{ inputs.sparkle-version }}
         SPARKLE_SHA256: ${{ inputs.sparkle-sha256 }}
-      run: |
+      # The GITHUB_ENV writes below hold paths under RUNNER_TEMP that this
+      # action builds itself, never an input, and later steps and callers read them.
+      run: | # zizmor: ignore[github-env]
         set -euo pipefail
 
         if [[ -z "$SPARKLE_SHA256" ]]; then
@@ -227,7 +229,9 @@ runs:
         UPDATES_TOKEN: ${{ inputs.updates-token }}
         GH_TOKEN: ${{ github.token }}
         RELEASE_NOTES: ${{ inputs.release-notes }}
-      run: |
+      # The GITHUB_ENV writes below hold paths under RUNNER_TEMP that this
+      # action builds itself, never an input, and later steps and callers read them.
+      run: | # zizmor: ignore[github-env]
         set -euo pipefail
 
         archives="$RUNNER_TEMP/sparkle-archives"
@@ -409,7 +413,9 @@ runs:
         CALLER_REPO: ${{ github.repository }}
         ASSET_PREFIX: ${{ inputs.asset-prefix }}
         RELEASE_HTML_URL: ${{ inputs.release-html-url }}
-      run: |
+      # The GITHUB_ENV writes below hold paths under RUNNER_TEMP that this
+      # action builds itself, never an input, and later steps and callers read them.
+      run: | # zizmor: ignore[github-env]
         set -euo pipefail
 
         key_file="$RUNNER_TEMP/sparkle_eddsa_private.key"

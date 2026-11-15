@@ -1,0 +1,18 @@
+# Each ignore names one audit and one file, with its reason. A finding in a
+# composite action cannot be ignored here; those ignores are inline comments.
+rules:
+  dependabot-cooldown:
+    ignore:
+      # dependabot.yml is synced from thaw-app/platform, so a cooldown added here
+      # is overwritten. Set it in that repository's config/org.yaml.
+      - dependabot.yml
+  superfluous-actions:
+    ignore:
+      # The release steps create draft releases with softprops/action-gh-release.
+      # Moving them to gh release would rewrite the release path for an informational finding.
+      - release-macos-app.yml
+  self-repository:
+    ignore:
+      # zizmor.yml runs ./actions/zizmor from its checkout: actionlint 1.7.12
+      # rejects the $/actions/zizmor form.
+      - zizmor.yml
