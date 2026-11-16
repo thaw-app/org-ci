@@ -88,6 +88,16 @@ Pass:
 `updates-repository` is empty, behavior is unchanged and `github.token` is
 enough.
 
+### Delta updates
+
+`sparkle-release` downloads the ZIPs of the last `previous-release-count`
+releases on the same line (default 3) so `generate_appcast` can make deltas
+from them. `generate_appcast` signs every archive it is given with the update
+key, so a downloaded ZIP is kept only when it matches the signature the
+existing appcast already gives it; any other is dropped with a warning and gets
+no delta. A kept ZIP's notes from the appcast go beside it as its `.html`, so
+its item keeps them. `previous-release-count: "0"` downloads none.
+
 ## Repository upkeep actions
 
 These hold steps every app repo runs in the same form. Each repo keeps

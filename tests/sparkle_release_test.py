@@ -1,5 +1,6 @@
 import re
 import subprocess
+import tempfile
 import unittest
 from pathlib import Path
 
@@ -53,6 +54,89 @@ class ReleaseLineTest(unittest.TestCase):
         self.assertRegex(
             ACTION.read_text(),
             re.escape('release_line="${CHANNEL:-stable}/$(major_of_tag "$TAG")"'),
+        )
+
+
+def keep_signed_priors():
+    text = ACTION.read_text()
+    start = text.index("        keep_signed_priors() {")
+    end = text.index("        keep_signed_priors\n", start)
+    return "\n".join(line[8:] for line in text[start:end].splitlines())
+
+
+# Accepts a signature only when it is the first 16 hex digits of the file's SHA-256.
+FAKE_SIGN_UPDATE = """#!/bin/bash
+[[ "$1" == --verify && "$2" == --ed-key-file ]] || exit 2
+[[ "$5" == "$(shasum -a 256 < "$4" | cut -c1-16)" ]]
+"""
+
+APPCAST = """<?xml version="1.0" standalone="yes"?>
+<rss xmlns:sparkle="http://www.andymatuschak.org/xml-namespaces/sparkle" version="2.0">
+  <channel>
+    <item>
+      <title>1.0</title>
+      <description><![CDATA[<p>Notes for 1.0</p>]]></description>
+      <enclosure url="https://github.com/o/r/releases/download/1.0/App_1.0.zip" sparkle:edSignature="{good}"/>
+      <sparkle:deltas>
+        <enclosure url="https://github.com/o/r/releases/download/1.0/App2-1.delta" sparkle:edSignature="{good}"/>
+      </sparkle:deltas>
+    </item>
+    <item>
+      <title>0.9</title>
+      <enclosure url="https://github.com/o/r/releases/download/0.9/App_0.9.zip" sparkle:edSignature="0000000000000000"/>
+    </item>
+  </channel>
+</rss>
+"""
+
+
+class PriorArchiveTest(unittest.TestCase):
+    def test_a_prior_zip_stays_only_with_its_appcast_signature_and_keeps_its_notes(self):
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder)
+            archives, pages, tools = root / "archives", root / "pages", root / "bin"
+            for path in (archives, pages, tools):
+                path.mkdir()
+            for name in ("App_2.0.zip", "App_1.0.zip", "App_0.9.zip", "App_0.8.zip"):
+                (archives / name).write_bytes(name.encode())
+            good = subprocess.run(
+                ["shasum", "-a", "256", str(archives / "App_1.0.zip")],
+                capture_output=True, text=True, check=True,
+            ).stdout[:16]
+            (pages / "appcast.xml").write_text(APPCAST.replace("{good}", good))
+            sign_update = tools / "sign_update"
+            sign_update.write_text(FAKE_SIGN_UPDATE)
+            sign_update.chmod(0o755)
+
+            result = subprocess.run(
+                ["bash", "-c", keep_signed_priors() + "\nkeep_signed_priors"],
+                capture_output=True, text=True, check=True,
+                env={
+                    "PATH": "/usr/bin:/bin",
+                    "SPARKLE_ARCHIVES": str(archives),
+                    "SPARKLE_PAGES": str(pages),
+                    "SPARKLE_BIN": str(tools),
+                    "ZIP_PATH": str(root / "build" / "App_2.0.zip"),
+                    "key_file": str(root / "key"),
+                },
+            )
+
+            self.assertEqual(
+                sorted(path.name for path in archives.iterdir()),
+                ["App_1.0.html", "App_1.0.zip", "App_2.0.zip"],
+                result.stdout,
+            )
+            self.assertEqual((archives / "App_1.0.html").read_text(), "<p>Notes for 1.0</p>\n")
+            self.assertIn("Dropping App_0.9.zip", result.stdout)
+            self.assertIn("Dropping App_0.8.zip", result.stdout)
+
+    def test_a_count_of_zero_fetches_no_prior_zip(self):
+        # The count was checked after a download, so 0 still fetched one ZIP.
+        text = ACTION.read_text()
+        loop = text[text.index('while IFS= read -r release_tag; do'):]
+        self.assertLess(
+            loop.index('[[ "$fetched" -ge "$PREVIOUS_COUNT" ]] && break'),
+            loop.index('download_prior_zip "$release_tag"'),
         )
 
 
