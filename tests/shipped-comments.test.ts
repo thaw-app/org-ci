@@ -96,6 +96,17 @@ test("only list entries under the chosen sections count, #### areas included", (
   assert.deepEqual(listEntries(section, ["known ISSUES"]).map((entry) => entry.section), ["Known issues"]);
 });
 
+test("closing #s are dropped from a section name, and an empty ### ends the section", () => {
+  const entries = listEntries("### Fixed ##\n- a #1\n### Fixed#\n- b #2\n### C#\n- c #3\n###\n- d #4", ["Fixed", "C#"]);
+  assert.deepEqual(
+    entries.map((entry) => [entry.section, entry.text]),
+    [
+      ["Fixed", "a #1"],
+      ["C#", "c #3"],
+    ],
+  );
+});
+
 test("ordered items, nested items and code blocks stay inside their entry", () => {
   const entries = listEntries(
     "### Fixed\n\n1. First (#1).\n   - nested #2\n\n   ```\n   #3\n   ```\n2. Second\nlazy line\n\nAfter the list #4.\n\n---\n",
@@ -121,6 +132,8 @@ test("pull requests, other repositories and code are not issue references", () =
     `By @malash in ${pull(1339)}.`,
     "https://github.com/thaw-app/Thaw/pull/1340",
     "[#687](https://github.com/stonerl/Thaw/issues/687)",
+    String.raw`[Fix #689 and \[more](https://github.com/stonerl/Thaw/issues/689)`,
+    `[#690](https://github.com/stonerl/Thaw/issues/690 "a title")`,
     "stonerl/Thaw#688 and thaw-app/Floe#12",
     "https://github.com/thaw-app/Floe/issues/13",
     "A fix with a `#999` in code.",
@@ -324,10 +337,20 @@ test("the API client reads issues, skips moved ones and follows comment pages", 
     "GET https://api.test/repos/o/r/issues/4": () => new Response("{}", { status: 404 }),
     "GET https://api.test/repos/o/r/issues/1/comments?per_page=100": () =>
       Response.json([{ id: 10, body: "a", user: { type: "User" } }], {
-        headers: { link: '<https://api.test/repos/o/r/issues/1/comments?per_page=100&page=2>; rel="next"' },
+        headers: {
+          link:
+            '<https://api.test/repos/o/r/issues/1/comments?per_page=100&page=2>; rel="next", ' +
+            '<https://api.test/repos/o/r/issues/1/comments?per_page=100&page=2>; rel="last"',
+        },
       }),
     "GET https://api.test/repos/o/r/issues/1/comments?per_page=100&page=2": () =>
-      Response.json([{ id: 11, body: null, user: { type: "Bot" } }]),
+      Response.json([{ id: 11, body: null, user: { type: "Bot" } }], {
+        headers: {
+          link:
+            '<https://api.test/repos/o/r/issues/1/comments?per_page=100&page=1>; rel="prev", ' +
+            '<https://api.test/repos/o/r/issues/1/comments?per_page=100&page=1>; rel="first"',
+        },
+      }),
     "POST https://api.test/repos/o/r/issues/1/comments": () => new Response("{}", { status: 201 }),
     "PATCH https://api.test/repos/o/r/issues/comments/11": () => new Response("{}", { status: 403 }),
   };

@@ -1,6 +1,4 @@
-import type { ChangelogReader } from "../../release-notes/src/models.js";
-
-export type { ChangelogReader };
+export type { ChangelogReader } from "../../release-notes/src/models.js";
 
 export interface Issue {
   readonly number: number;

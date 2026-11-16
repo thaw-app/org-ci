@@ -8,74 +8,99 @@ export interface ChangelogEntry {
 }
 
 const ITEM = /^ {0,3}(?:[-*+]|\d{1,9}[.)])(?:[\t ]+|$)/;
+const HEADING = /^(#{1,6})(?:[\t ]|$)/;
+
+const sectionKey = (name: string): string => name.trim().toLowerCase();
 
 // Lists the top-level list items under one of `sections` (compared without case); a `####` keeps its `###`.
 // Prose, quotes and anything before the first `###` are never entries.
 export function listEntries(body: string, sections: readonly string[]): ChangelogEntry[] {
-  const wanted = new Set(sections.map((name) => name.trim().toLowerCase()));
-  const entries: ChangelogEntry[] = [];
-  let section: string | undefined;
-  let lines: string[] | undefined;
-  let afterBlank = false;
-  let fence: string | null = null;
+  const reader = new EntryReader(new Set(sections.map(sectionKey)));
+  for (const line of body.split(/\r?\n/)) reader.read(line);
+  return reader.finish();
+}
 
-  const close = (): void => {
-    if (lines !== undefined && section !== undefined) {
-      const text = lines.join("\n").trim();
-      if (text.length > 0) entries.push({ section, text });
-    }
-    lines = undefined;
-    afterBlank = false;
-  };
+class EntryReader {
+  private readonly entries: ChangelogEntry[] = [];
+  private section: string | undefined;
+  private lines: string[] | undefined;
+  private afterBlank = false;
+  private fence: string | null = null;
 
-  for (const line of body.split(/\r?\n/)) {
-    const wasFenced = fence !== null;
-    fence = fenceAfter(fence, line);
-    if (wasFenced || fence !== null) {
-      // Code stays with the item it is indented under, and is never an item itself.
-      if (lines !== undefined && /^[\t ]/.test(line)) lines.push(line.trim());
-      else close();
-      continue;
-    }
+  constructor(private readonly wanted: ReadonlySet<string>) {}
 
-    const heading = /^(#{1,6})[\t ]+(.*?)[\t ]*#*[\t ]*$/.exec(line);
-    if (heading !== null) {
-      close();
-      const level = heading[1]?.length ?? 0;
-      if (level === 3) section = heading[2];
-      else if (level < 3) section = undefined;
-      continue;
-    }
+  read(line: string): void {
+    const wasFenced = this.fence !== null;
+    this.fence = fenceAfter(this.fence, line);
+    if (wasFenced || this.fence !== null) this.readCode(line);
+    else if (!this.readHeading(line)) this.readText(line);
+  }
 
+  finish(): ChangelogEntry[] {
+    this.close();
+    return this.entries;
+  }
+
+  // Code stays with the item it is indented under, and is never an item itself.
+  private readCode(line: string): void {
+    if (this.lines !== undefined && /^[\t ]/.test(line)) this.lines.push(line.trim());
+    else this.close();
+  }
+
+  private readHeading(line: string): boolean {
+    const heading = HEADING.exec(line);
+    if (heading === null) return false;
+    this.close();
+    const level = heading[1]?.length ?? 0;
+    if (level === 3) this.section = headingText(line.slice(level));
+    else if (level < 3) this.section = undefined;
+    return true;
+  }
+
+  private readText(line: string): void {
     if (line.trim().length === 0) {
-      afterBlank = lines !== undefined;
-      continue;
+      this.afterBlank = this.lines !== undefined;
+      return;
     }
-
     // Indented lines, nested items among them, belong to the open item.
-    if (lines !== undefined && /^[\t ]{2,}/.test(line)) {
-      lines.push(line.trim());
-      afterBlank = false;
-      continue;
+    if (this.lines !== undefined && /^[\t ]{2,}/.test(line)) {
+      this.lines.push(line.trim());
+      this.afterBlank = false;
+      return;
     }
-
     const item = ITEM.exec(line);
     if (item !== null) {
-      close();
-      if (section !== undefined && wanted.has(section.trim().toLowerCase())) {
-        lines = [line.slice(item[0].length)];
+      this.close();
+      if (this.section !== undefined && this.wanted.has(sectionKey(this.section))) {
+        this.lines = [line.slice(item[0].length)];
       }
-      continue;
+      return;
     }
-
     // A line straight after the item, without a blank line, continues it.
-    if (lines !== undefined && !afterBlank && !/^ {0,3}>/.test(line)) {
-      lines.push(line.trim());
-      continue;
+    if (this.lines !== undefined && !this.afterBlank && !/^ {0,3}>/.test(line)) {
+      this.lines.push(line.trim());
+      return;
     }
     // A paragraph, a quote or a rule after the list ends the item.
-    close();
+    this.close();
   }
-  close();
-  return entries;
+
+  private close(): void {
+    if (this.lines !== undefined && this.section !== undefined) {
+      const text = this.lines.join("\n").trim();
+      if (text.length > 0) this.entries.push({ section: this.section, text });
+    }
+    this.lines = undefined;
+    this.afterBlank = false;
+  }
+}
+
+// A heading's text without the #s that may close it, as in "### Fixed ###".
+// Closing #s follow a space; the # of "### C#" is part of the text.
+function headingText(rest: string): string {
+  const text = rest.trim();
+  let end = text.length;
+  while (end > 0 && text[end - 1] === "#") end -= 1;
+  if (end > 0 && !/[\t ]/.test(text.charAt(end - 1))) return text;
+  return text.slice(0, end).trimEnd();
 }

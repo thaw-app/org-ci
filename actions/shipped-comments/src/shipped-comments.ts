@@ -4,6 +4,7 @@ import { markerFor, renderComment } from "./comment.js";
 import { issueNumbersIn } from "./issue-references.js";
 import type {
   ChangelogReader,
+  Issue,
   IssueApi,
   Logger,
   ShippedCommentsRequest,
@@ -16,7 +17,25 @@ interface PlannedComment {
   readonly existingId: number | undefined;
 }
 
+interface Plan {
+  readonly planned: PlannedComment[];
+  readonly unchanged: number[];
+  readonly skipped: number[];
+}
+
 const NOTHING: ShippedCommentsResult = { commented: [], unchanged: [], skipped: [] };
+
+// GitHub asks clients to send one request at a time, so each step waits for the one before it.
+function inTurn<T>(items: Iterable<T>, step: (item: T) => Promise<void>): Promise<void> {
+  return Array.from(items).reduce((previous, item) => previous.then(() => step(item)), Promise.resolve());
+}
+
+function skipReason(issue: Issue | undefined): string | undefined {
+  if (issue === undefined) return "not found, deleted or moved";
+  if (issue.isPullRequest) return "a pull request";
+  if (issue.locked) return "locked";
+  return undefined;
+}
 
 export class ShippedComments {
   constructor(
@@ -27,77 +46,80 @@ export class ShippedComments {
 
   async run(request: ShippedCommentsRequest): Promise<ShippedCommentsResult> {
     this.validate(request);
+    const references = await this.referencesFor(request);
+    if (references.size === 0) return NOTHING;
 
+    const plan: Plan = { planned: [], unchanged: [], skipped: [] };
+    await inTurn(references, ([number, entries]) => this.planIssue(number, entries, request, plan));
+    if (plan.planned.length > request.maxComments) {
+      const numbers = plan.planned.map((comment) => `#${comment.number}`).join(", ");
+      throw new Error(
+        `${request.tag} would comment on ${plan.planned.length} issues, more than max-comments (${request.maxComments}): ` +
+          `${numbers}. Nothing was posted.`,
+      );
+    }
+    await inTurn(plan.planned, (comment) => this.post(comment, request.dryRun));
+
+    return { commented: plan.planned.map((comment) => comment.number), unchanged: plan.unchanged, skipped: plan.skipped };
+  }
+
+  // Issue number to the entries that mention it; empty when there is nothing to comment.
+  private async referencesFor(request: ShippedCommentsRequest): Promise<Map<number, string[]>> {
     const read = await this.changelogReader.read(request.changelogPaths);
     if (read.kind === "missing") {
       this.log.warning(`No changelog found in ${request.changelogPaths.join(", ")}; nothing to comment.`);
-      return NOTHING;
+      return new Map();
     }
     const section = findChangelogSection(read.changelog.content, request.tag);
     if (section === undefined) {
       this.log.warning(`${read.changelog.path} has no section for ${request.tag}; nothing to comment.`);
-      return NOTHING;
+      return new Map();
     }
-
     const references = this.referencesIn(section, request);
     if (references.size === 0) {
       this.log.info(`No entry under ${request.sections.join(", ")} refers to an issue of ${request.repository}.`);
-      return NOTHING;
+    }
+    return references;
+  }
+
+  // Sorts one issue into the plan: skipped, already commented, or to comment on.
+  private async planIssue(number: number, entries: string[], request: ShippedCommentsRequest, plan: Plan): Promise<void> {
+    const reason = skipReason(await this.api.getIssue(number));
+    if (reason !== undefined) {
+      this.log.info(`Skipping #${number}: ${reason}.`);
+      plan.skipped.push(number);
+      return;
     }
 
-    const planned: PlannedComment[] = [];
-    const unchanged: number[] = [];
-    const skipped: number[] = [];
-    for (const [number, entries] of references) {
-      const issue = await this.api.getIssue(number);
-      const reason =
-        issue === undefined ? "not found, deleted or moved"
-        : issue.isPullRequest ? "a pull request"
-        : issue.locked ? "locked"
-        : undefined;
-      if (reason !== undefined) {
-        this.log.info(`Skipping #${number}: ${reason}.`);
-        skipped.push(number);
-        continue;
-      }
-
-      const body = renderComment({
-        tag: request.tag,
-        releaseUrl: request.releaseUrl,
-        productName: request.productName,
-        entries,
-      });
-      const marker = markerFor(request.tag);
-      const existing = (await this.api.listComments(number)).find(
-        (comment) => comment.byBot && comment.body.startsWith(marker),
-      );
-      if (existing?.body === body) {
-        this.log.info(`#${number} already has this comment.`);
-        unchanged.push(number);
-        continue;
-      }
-      planned.push({ number, body, existingId: existing?.id });
+    const body = renderComment({
+      tag: request.tag,
+      releaseUrl: request.releaseUrl,
+      productName: request.productName,
+      entries,
+    });
+    const marker = markerFor(request.tag);
+    const existing = (await this.api.listComments(number)).find(
+      (comment) => comment.byBot && comment.body.startsWith(marker),
+    );
+    if (existing?.body === body) {
+      this.log.info(`#${number} already has this comment.`);
+      plan.unchanged.push(number);
+      return;
     }
+    plan.planned.push({ number, body, existingId: existing?.id });
+  }
 
-    if (planned.length > request.maxComments) {
-      throw new Error(
-        `${request.tag} would comment on ${planned.length} issues, more than max-comments (${request.maxComments}): ` +
-          `${planned.map((comment) => `#${comment.number}`).join(", ")}. Nothing was posted.`,
-      );
+  private async post(comment: PlannedComment, dryRun: boolean): Promise<void> {
+    const isNew = comment.existingId === undefined;
+    if (dryRun) {
+      const verb = isNew ? "comment on" : "update the comment on";
+      this.log.info(`Dry run: would ${verb} #${comment.number}:\n${comment.body}`);
+      return;
     }
-
-    for (const comment of planned) {
-      const verb = comment.existingId === undefined ? "comment on" : "update the comment on";
-      if (request.dryRun) {
-        this.log.info(`Dry run: would ${verb} #${comment.number}:\n${comment.body}`);
-        continue;
-      }
-      if (comment.existingId === undefined) await this.api.createComment(comment.number, comment.body);
-      else await this.api.updateComment(comment.existingId, comment.body);
-      this.log.info(`${comment.existingId === undefined ? "Commented on" : "Updated the comment on"} #${comment.number}.`);
-    }
-
-    return { commented: planned.map((comment) => comment.number), unchanged, skipped };
+    if (comment.existingId === undefined) await this.api.createComment(comment.number, comment.body);
+    else await this.api.updateComment(comment.existingId, comment.body);
+    const done = isNew ? "Commented on" : "Updated the comment on";
+    this.log.info(`${done} #${comment.number}.`);
   }
 
   // Issue number to the entries that mention it, in changelog order.

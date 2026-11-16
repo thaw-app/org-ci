@@ -20,19 +20,22 @@ export class GitHubIssueApi implements IssueApi {
     return { number: issue.number, isPullRequest: issue.pull_request != null, locked: issue.locked === true };
   }
 
-  async listComments(number: number): Promise<IssueComment[]> {
-    const comments: IssueComment[] = [];
-    let url: string | undefined = `${this.base()}/repos/${this.repository}/issues/${number}/comments?per_page=100`;
-    while (url !== undefined) {
-      const response = await this.request("GET", url);
-      await this.check(response, `list the comments on #${number}`);
-      const page = (await response.json()) as { id: number; body?: string | null; user?: { type?: string } | null }[];
-      for (const comment of page) {
-        comments.push({ id: comment.id, body: comment.body ?? "", byBot: comment.user?.type === "Bot" });
-      }
-      url = /<([^>]+)>;\s*rel="next"/.exec(response.headers.get("link") ?? "")?.[1];
-    }
-    return comments;
+  listComments(number: number): Promise<IssueComment[]> {
+    return this.commentsFrom(`${this.base()}/repos/${this.repository}/issues/${number}/comments?per_page=100`, number);
+  }
+
+  // Reads one page of comments, then the pages after it.
+  private async commentsFrom(url: string, number: number): Promise<IssueComment[]> {
+    const response = await this.request("GET", url);
+    await this.check(response, `list the comments on #${number}`);
+    const page = (await response.json()) as { id: number; body?: string | null; user?: { type?: string } | null }[];
+    const comments = page.map((comment) => ({
+      id: comment.id,
+      body: comment.body ?? "",
+      byBot: comment.user?.type === "Bot",
+    }));
+    const next = nextPageUrl(response.headers.get("link"));
+    return next === undefined ? comments : [...comments, ...(await this.commentsFrom(next, number))];
   }
 
   async createComment(number: number, body: string): Promise<void> {
@@ -46,7 +49,9 @@ export class GitHubIssueApi implements IssueApi {
   }
 
   private base(): string {
-    return this.apiUrl.replace(/\/+$/, "");
+    let end = this.apiUrl.length;
+    while (end > 0 && this.apiUrl[end - 1] === "/") end -= 1;
+    return this.apiUrl.slice(0, end);
   }
 
   private request(method: string, path: string, body?: unknown): Promise<Response> {
@@ -70,4 +75,13 @@ export class GitHubIssueApi implements IssueApi {
     const detail = (await response.text()).slice(0, 300);
     throw new Error(`Could not ${action}: HTTP ${response.status} ${detail}`);
   }
+}
+
+// The rel="next" target of a Link header, such as <https://…&page=2>; rel="next", <https://…&page=5>; rel="last".
+function nextPageUrl(link: string | null): string | undefined {
+  for (const part of (link ?? "").split(",")) {
+    const [target = "", ...params] = part.split(";").map((piece) => piece.trim());
+    if (params.includes('rel="next"') && target.startsWith("<") && target.endsWith(">")) return target.slice(1, -1);
+  }
+  return undefined;
 }

@@ -8,10 +8,7 @@ export function issueNumbersIn(text: string, repository: string, serverUrl: stri
   };
   const self = repository.toLowerCase();
   const host = new URL(serverUrl).host.toLowerCase();
-  const url = new RegExp(
-    String.raw`https?://([^/\s)>\]]+)/([\w.-]+)/([\w.-]+)/(issues|pull|pulls)/(\d+)[^\s)>\]]*`,
-    "gi",
-  );
+  const url = /https?:\/\/([^/\s)>\]]+)\/([\w.-]+)\/([\w.-]+)\/(issues|pull|pulls)\/(\d+)[^\s)>\]]*/gi;
   const isOwnIssue = (match: readonly (string | undefined)[]): boolean =>
     match[1]?.toLowerCase() === host &&
     `${match[2]}/${match[3]}`.toLowerCase() === self &&
@@ -22,7 +19,7 @@ export function issueNumbersIn(text: string, repository: string, serverUrl: stri
   let rest = text.replace(/(`+)[\s\S]*?\1/g, blank);
 
   // A link's text, such as [#687], names the link's target, so it never counts on its own.
-  rest = rest.replace(/\[([^\]]*)\]\(([^)\s]*)[^)]*\)/g, (link: string, _label: string, target: string, at: number) => {
+  rest = rest.replace(/\[(?:\\.|[^[\]\\])*\]\(([^)\s]*)(?:\s[^)]*)?\)/g, (link: string, target: string, at: number) => {
     const match = new RegExp(url.source, "i").exec(target);
     if (match === null) return link.replace(target, blank(target));
     if (isOwnIssue(match)) add(at, match[5]);

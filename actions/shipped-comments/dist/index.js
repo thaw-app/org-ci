@@ -17808,6 +17808,17 @@ __export(exports_core, {
   warning: () => warning
 });
 
+// node_modules/@actions/core/lib/platform.js
+var exports_platform = {};
+__export(exports_platform, {
+  arch: () => arch,
+  getDetails: () => getDetails,
+  isLinux: () => isLinux,
+  isMacOS: () => isMacOS,
+  isWindows: () => isWindows,
+  platform: () => platform
+});
+
 // node_modules/@actions/core/lib/command.js
 var os = __toESM(require("os"), 1);
 
@@ -18887,15 +18898,6 @@ function toPlatformPath(pth) {
   return pth.replace(/[/\\]/g, path.sep);
 }
 // node_modules/@actions/core/lib/platform.js
-var exports_platform = {};
-__export(exports_platform, {
-  arch: () => arch,
-  getDetails: () => getDetails,
-  isLinux: () => isLinux,
-  isMacOS: () => isMacOS,
-  isWindows: () => isWindows,
-  platform: () => platform
-});
 var import_os2 = __toESM(require("os"), 1);
 
 // node_modules/@actions/exec/lib/exec.js
@@ -19932,19 +19934,20 @@ class GitHubIssueApi {
     const issue = await response.json();
     return { number: issue.number, isPullRequest: issue.pull_request != null, locked: issue.locked === true };
   }
-  async listComments(number) {
-    const comments = [];
-    let url = `${this.base()}/repos/${this.repository}/issues/${number}/comments?per_page=100`;
-    while (url !== undefined) {
-      const response = await this.request("GET", url);
-      await this.check(response, `list the comments on #${number}`);
-      const page = await response.json();
-      for (const comment of page) {
-        comments.push({ id: comment.id, body: comment.body ?? "", byBot: comment.user?.type === "Bot" });
-      }
-      url = /<([^>]+)>;\s*rel="next"/.exec(response.headers.get("link") ?? "")?.[1];
-    }
-    return comments;
+  listComments(number) {
+    return this.commentsFrom(`${this.base()}/repos/${this.repository}/issues/${number}/comments?per_page=100`, number);
+  }
+  async commentsFrom(url, number) {
+    const response = await this.request("GET", url);
+    await this.check(response, `list the comments on #${number}`);
+    const page = await response.json();
+    const comments = page.map((comment) => ({
+      id: comment.id,
+      body: comment.body ?? "",
+      byBot: comment.user?.type === "Bot"
+    }));
+    const next = nextPageUrl(response.headers.get("link"));
+    return next === undefined ? comments : [...comments, ...await this.commentsFrom(next, number)];
   }
   async createComment(number, body) {
     const response = await this.request("POST", `/repos/${this.repository}/issues/${number}/comments`, { body });
@@ -19955,7 +19958,10 @@ class GitHubIssueApi {
     await this.check(response, `update comment ${commentId}`);
   }
   base() {
-    return this.apiUrl.replace(/\/+$/, "");
+    let end = this.apiUrl.length;
+    while (end > 0 && this.apiUrl[end - 1] === "/")
+      end -= 1;
+    return this.apiUrl.slice(0, end);
   }
   request(method, path, body) {
     const url = path.startsWith("/") ? `${this.base()}${path}` : path;
@@ -19978,6 +19984,14 @@ class GitHubIssueApi {
     const detail = (await response.text()).slice(0, 300);
     throw new Error(`Could not ${action}: HTTP ${response.status} ${detail}`);
   }
+}
+function nextPageUrl(link) {
+  for (const part of (link ?? "").split(",")) {
+    const [target = "", ...params] = part.split(";").map((piece) => piece.trim());
+    if (params.includes('rel="next"') && target.startsWith("<") && target.endsWith(">"))
+      return target.slice(1, -1);
+  }
+  return;
 }
 
 // actions/release-notes/src/changelog-section.ts
@@ -20035,73 +20049,103 @@ function isReleaseHeading(line, tag) {
 
 // actions/shipped-comments/src/changelog-entries.ts
 var ITEM = /^ {0,3}(?:[-*+]|\d{1,9}[.)])(?:[\t ]+|$)/;
+var HEADING = /^(#{1,6})(?:[\t ]|$)/;
+var sectionKey = (name) => name.trim().toLowerCase();
 function listEntries(body, sections) {
-  const wanted = new Set(sections.map((name) => name.trim().toLowerCase()));
-  const entries = [];
-  let section;
-  let lines;
-  let afterBlank = false;
-  let fence = null;
-  const close = () => {
-    if (lines !== undefined && section !== undefined) {
-      const text = lines.join(`
-`).trim();
-      if (text.length > 0)
-        entries.push({ section, text });
-    }
-    lines = undefined;
-    afterBlank = false;
-  };
-  for (const line of body.split(/\r?\n/)) {
-    const wasFenced = fence !== null;
-    fence = fenceAfter(fence, line);
-    if (wasFenced || fence !== null) {
-      if (lines !== undefined && /^[\t ]/.test(line))
-        lines.push(line.trim());
-      else
-        close();
-      continue;
-    }
-    const heading = /^(#{1,6})[\t ]+(.*?)[\t ]*#*[\t ]*$/.exec(line);
-    if (heading !== null) {
-      close();
-      const level = heading[1]?.length ?? 0;
-      if (level === 3)
-        section = heading[2];
-      else if (level < 3)
-        section = undefined;
-      continue;
-    }
+  const reader = new EntryReader(new Set(sections.map(sectionKey)));
+  for (const line of body.split(/\r?\n/))
+    reader.read(line);
+  return reader.finish();
+}
+
+class EntryReader {
+  wanted;
+  entries = [];
+  section;
+  lines;
+  afterBlank = false;
+  fence = null;
+  constructor(wanted) {
+    this.wanted = wanted;
+  }
+  read(line) {
+    const wasFenced = this.fence !== null;
+    this.fence = fenceAfter(this.fence, line);
+    if (wasFenced || this.fence !== null)
+      this.readCode(line);
+    else if (!this.readHeading(line))
+      this.readText(line);
+  }
+  finish() {
+    this.close();
+    return this.entries;
+  }
+  readCode(line) {
+    if (this.lines !== undefined && /^[\t ]/.test(line))
+      this.lines.push(line.trim());
+    else
+      this.close();
+  }
+  readHeading(line) {
+    const heading = HEADING.exec(line);
+    if (heading === null)
+      return false;
+    this.close();
+    const level = heading[1]?.length ?? 0;
+    if (level === 3)
+      this.section = headingText(line.slice(level));
+    else if (level < 3)
+      this.section = undefined;
+    return true;
+  }
+  readText(line) {
     if (line.trim().length === 0) {
-      afterBlank = lines !== undefined;
-      continue;
+      this.afterBlank = this.lines !== undefined;
+      return;
     }
-    if (lines !== undefined && /^[\t ]{2,}/.test(line)) {
-      lines.push(line.trim());
-      afterBlank = false;
-      continue;
+    if (this.lines !== undefined && /^[\t ]{2,}/.test(line)) {
+      this.lines.push(line.trim());
+      this.afterBlank = false;
+      return;
     }
     const item = ITEM.exec(line);
     if (item !== null) {
-      close();
-      if (section !== undefined && wanted.has(section.trim().toLowerCase())) {
-        lines = [line.slice(item[0].length)];
+      this.close();
+      if (this.section !== undefined && this.wanted.has(sectionKey(this.section))) {
+        this.lines = [line.slice(item[0].length)];
       }
-      continue;
+      return;
     }
-    if (lines !== undefined && !afterBlank && !/^ {0,3}>/.test(line)) {
-      lines.push(line.trim());
-      continue;
+    if (this.lines !== undefined && !this.afterBlank && !/^ {0,3}>/.test(line)) {
+      this.lines.push(line.trim());
+      return;
     }
-    close();
+    this.close();
   }
-  close();
-  return entries;
+  close() {
+    if (this.lines !== undefined && this.section !== undefined) {
+      const text = this.lines.join(`
+`).trim();
+      if (text.length > 0)
+        this.entries.push({ section: this.section, text });
+    }
+    this.lines = undefined;
+    this.afterBlank = false;
+  }
+}
+function headingText(rest) {
+  const text = rest.trim();
+  let end = text.length;
+  while (end > 0 && text[end - 1] === "#")
+    end -= 1;
+  if (end > 0 && !/[\t ]/.test(text.charAt(end - 1)))
+    return text;
+  return text.slice(0, end).trimEnd();
 }
 
 // actions/shipped-comments/src/comment.ts
 function channelOfTag(tag) {
-  const version = tag.replace(/^v/i, "").replace(/\+.*$/, "");
+  const [version = ""] = tag.replace(/^v/i, "").split("+", 1);
   const dash = version.indexOf("-");
   if (dash === -1)
     return "stable";
@@ -20121,7 +20165,8 @@ function markerFor(tag) {
 }
 function renderComment(content) {
   const product = content.productName.trim();
-  const version = `${product.length > 0 ? `${product} ` : ""}[${content.tag}](${content.releaseUrl})`;
+  const prefix = product.length > 0 ? `${product} ` : "";
+  const version = `${prefix}[${content.tag}](${content.releaseUrl})`;
   const subject = content.entries.length === 1 ? "The change below" : "The changes below";
   const quotes = content.entries.map((entry) => quietMentions(entry).split(`
 `).map((line) => `> ${line}`.trimEnd()).join(`
@@ -20151,11 +20196,11 @@ function issueNumbersIn(text, repository, serverUrl) {
   };
   const self = repository.toLowerCase();
   const host = new URL(serverUrl).host.toLowerCase();
-  const url = new RegExp(String.raw`https?://([^/\s)>\]]+)/([\w.-]+)/([\w.-]+)/(issues|pull|pulls)/(\d+)[^\s)>\]]*`, "gi");
+  const url = /https?:\/\/([^/\s)>\]]+)\/([\w.-]+)\/([\w.-]+)\/(issues|pull|pulls)\/(\d+)[^\s)>\]]*/gi;
   const isOwnIssue = (match) => match[1]?.toLowerCase() === host && `${match[2]}/${match[3]}`.toLowerCase() === self && match[4]?.toLowerCase() === "issues";
   const blank = (value) => " ".repeat(value.length);
   let rest = text.replace(/(`+)[\s\S]*?\1/g, blank);
-  rest = rest.replace(/\[([^\]]*)\]\(([^)\s]*)[^)]*\)/g, (link, _label, target, at) => {
+  rest = rest.replace(/\[(?:\\.|[^[\]\\])*\]\(([^)\s]*)(?:\s[^)]*)?\)/g, (link, target, at) => {
     const match = new RegExp(url.source, "i").exec(target);
     if (match === null)
       return link.replace(target, blank(target));
@@ -20187,6 +20232,18 @@ function issueNumbersIn(text, repository, serverUrl) {
 
 // actions/shipped-comments/src/shipped-comments.ts
 var NOTHING = { commented: [], unchanged: [], skipped: [] };
+function inTurn(items, step) {
+  return Array.from(items).reduce((previous, item) => previous.then(() => step(item)), Promise.resolve());
+}
+function skipReason(issue) {
+  if (issue === undefined)
+    return "not found, deleted or moved";
+  if (issue.isPullRequest)
+    return "a pull request";
+  if (issue.locked)
+    return "locked";
+  return;
+}
 
 class ShippedComments {
   changelogReader;
@@ -20199,64 +20256,71 @@ class ShippedComments {
   }
   async run(request) {
     this.validate(request);
+    const references = await this.referencesFor(request);
+    if (references.size === 0)
+      return NOTHING;
+    const plan = { planned: [], unchanged: [], skipped: [] };
+    await inTurn(references, ([number, entries]) => this.planIssue(number, entries, request, plan));
+    if (plan.planned.length > request.maxComments) {
+      const numbers = plan.planned.map((comment) => `#${comment.number}`).join(", ");
+      throw new Error(`${request.tag} would comment on ${plan.planned.length} issues, more than max-comments (${request.maxComments}): ` + `${numbers}. Nothing was posted.`);
+    }
+    await inTurn(plan.planned, (comment) => this.post(comment, request.dryRun));
+    return { commented: plan.planned.map((comment) => comment.number), unchanged: plan.unchanged, skipped: plan.skipped };
+  }
+  async referencesFor(request) {
     const read = await this.changelogReader.read(request.changelogPaths);
     if (read.kind === "missing") {
       this.log.warning(`No changelog found in ${request.changelogPaths.join(", ")}; nothing to comment.`);
-      return NOTHING;
+      return new Map;
     }
     const section = findChangelogSection(read.changelog.content, request.tag);
     if (section === undefined) {
       this.log.warning(`${read.changelog.path} has no section for ${request.tag}; nothing to comment.`);
-      return NOTHING;
+      return new Map;
     }
     const references = this.referencesIn(section, request);
     if (references.size === 0) {
       this.log.info(`No entry under ${request.sections.join(", ")} refers to an issue of ${request.repository}.`);
-      return NOTHING;
     }
-    const planned = [];
-    const unchanged = [];
-    const skipped = [];
-    for (const [number, entries] of references) {
-      const issue = await this.api.getIssue(number);
-      const reason = issue === undefined ? "not found, deleted or moved" : issue.isPullRequest ? "a pull request" : issue.locked ? "locked" : undefined;
-      if (reason !== undefined) {
-        this.log.info(`Skipping #${number}: ${reason}.`);
-        skipped.push(number);
-        continue;
-      }
-      const body = renderComment({
-        tag: request.tag,
-        releaseUrl: request.releaseUrl,
-        productName: request.productName,
-        entries
-      });
-      const marker = markerFor(request.tag);
-      const existing = (await this.api.listComments(number)).find((comment) => comment.byBot && comment.body.startsWith(marker));
-      if (existing?.body === body) {
-        this.log.info(`#${number} already has this comment.`);
-        unchanged.push(number);
-        continue;
-      }
-      planned.push({ number, body, existingId: existing?.id });
+    return references;
+  }
+  async planIssue(number, entries, request, plan) {
+    const reason = skipReason(await this.api.getIssue(number));
+    if (reason !== undefined) {
+      this.log.info(`Skipping #${number}: ${reason}.`);
+      plan.skipped.push(number);
+      return;
     }
-    if (planned.length > request.maxComments) {
-      throw new Error(`${request.tag} would comment on ${planned.length} issues, more than max-comments (${request.maxComments}): ` + `${planned.map((comment) => `#${comment.number}`).join(", ")}. Nothing was posted.`);
+    const body = renderComment({
+      tag: request.tag,
+      releaseUrl: request.releaseUrl,
+      productName: request.productName,
+      entries
+    });
+    const marker = markerFor(request.tag);
+    const existing = (await this.api.listComments(number)).find((comment) => comment.byBot && comment.body.startsWith(marker));
+    if (existing?.body === body) {
+      this.log.info(`#${number} already has this comment.`);
+      plan.unchanged.push(number);
+      return;
     }
-    for (const comment of planned) {
-      const verb = comment.existingId === undefined ? "comment on" : "update the comment on";
-      if (request.dryRun) {
-        this.log.info(`Dry run: would ${verb} #${comment.number}:
+    plan.planned.push({ number, body, existingId: existing?.id });
+  }
+  async post(comment, dryRun) {
+    const isNew = comment.existingId === undefined;
+    if (dryRun) {
+      const verb = isNew ? "comment on" : "update the comment on";
+      this.log.info(`Dry run: would ${verb} #${comment.number}:
 ${comment.body}`);
-        continue;
-      }
-      if (comment.existingId === undefined)
-        await this.api.createComment(comment.number, comment.body);
-      else
-        await this.api.updateComment(comment.existingId, comment.body);
-      this.log.info(`${comment.existingId === undefined ? "Commented on" : "Updated the comment on"} #${comment.number}.`);
+      return;
     }
-    return { commented: planned.map((comment) => comment.number), unchanged, skipped };
+    if (comment.existingId === undefined)
+      await this.api.createComment(comment.number, comment.body);
+    else
+      await this.api.updateComment(comment.existingId, comment.body);
+    const done = isNew ? "Commented on" : "Updated the comment on";
+    this.log.info(`${done} #${comment.number}.`);
   }
   referencesIn(section, request) {
     const references = new Map;

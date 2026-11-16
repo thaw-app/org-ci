@@ -3,7 +3,7 @@ export type Channel = "alpha" | "beta" | "rc" | "stable" | "prerelease";
 // The channel is the first pre-release identifier: 3.0.0-alpha.14 is alpha,
 // 2.2.0-rc.1 is rc, and a tag without one is stable.
 export function channelOfTag(tag: string): Channel {
-  const version = tag.replace(/^v/i, "").replace(/\+.*$/, "");
+  const [version = ""] = tag.replace(/^v/i, "").split("+", 1);
   const dash = version.indexOf("-");
   if (dash === -1) return "stable";
   const identifier = version.slice(dash + 1).toLowerCase();
@@ -33,7 +33,8 @@ export interface CommentContent {
 
 export function renderComment(content: CommentContent): string {
   const product = content.productName.trim();
-  const version = `${product.length > 0 ? `${product} ` : ""}[${content.tag}](${content.releaseUrl})`;
+  const prefix = product.length > 0 ? `${product} ` : "";
+  const version = `${prefix}[${content.tag}](${content.releaseUrl})`;
   const subject = content.entries.length === 1 ? "The change below" : "The changes below";
   const quotes = content.entries.map((entry) =>
     quietMentions(entry)
