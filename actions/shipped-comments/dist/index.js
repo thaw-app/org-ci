@@ -19930,7 +19930,12 @@ class GitHubIssueApi {
       return;
     await this.check(response, `read #${number}`);
     const issue = await response.json();
-    return { number: issue.number, isPullRequest: issue.pull_request != null, locked: issue.locked === true };
+    return {
+      number: issue.number,
+      isPullRequest: issue.pull_request != null,
+      locked: issue.locked === true,
+      open: issue.state === "open"
+    };
   }
   listComments(number) {
     return this.commentsFrom(`${this.base()}/repos/${this.repository}/issues/${number}/comments?per_page=100`, number);
@@ -19954,6 +19959,13 @@ class GitHubIssueApi {
   async updateComment(commentId, body) {
     const response = await this.request("PATCH", `/repos/${this.repository}/issues/comments/${commentId}`, { body });
     await this.check(response, `update comment ${commentId}`);
+  }
+  async closeIssue(number) {
+    const response = await this.request("PATCH", `/repos/${this.repository}/issues/${number}`, {
+      state: "closed",
+      state_reason: "completed"
+    });
+    await this.check(response, `close #${number}`);
   }
   base() {
     let end = this.apiUrl.length;
@@ -20006,7 +20018,7 @@ function findChangelogSection(content, tag) {
       collecting = !isCode && isReleaseHeading(line, tag);
       continue;
     }
-    if (!isCode && /^##(?:[\t ]|$)/.test(line))
+    if (!isCode && /^ {0,3}##(?:[\t ]|$)/.test(line))
       break;
     sectionLines.push(line);
   }
@@ -20026,7 +20038,7 @@ function fenceAfter(fence, line) {
   return closes ? null : fence;
 }
 function isReleaseHeading(line, tag) {
-  const prefix = /^##[\t ]+/.exec(line);
+  const prefix = /^ {0,3}##[\t ]+/.exec(line);
   if (prefix === null)
     return false;
   const heading = line.slice(prefix[0].length);
@@ -20176,6 +20188,8 @@ function renderComment(content) {
     quotes.join(`
 
 `),
+    "",
+    "_This is an automated message._",
     ""
   ].join(`
 `);
@@ -20197,15 +20211,14 @@ function issueNumbersIn(text, repository, serverUrl) {
   const url = /https?:\/\/([^/\s)>\]]+)\/([\w.-]+)\/([\w.-]+)\/(issues|pull|pulls)\/(\d+)[^\s)>\]]*/gi;
   const isOwnIssue = (match) => match[1]?.toLowerCase() === host && `${match[2]}/${match[3]}`.toLowerCase() === self && match[4]?.toLowerCase() === "issues";
   const blank = (value) => " ".repeat(value.length);
-  let rest = text.replace(/(`+)[\s\S]*?\1/g, blank);
+  let rest = blankFences(text).replace(/(`+)[\s\S]*?\1/g, blank).replace(/<!--[\s\S]*?(?:-->|$)/g, blank);
   rest = rest.replace(/\[(?:\\.|[^[\]\\])*\]\(([^)\s]*)(?:\s[^)]*)?\)/g, (link, target, at) => {
     const match = new RegExp(url.source, "i").exec(target);
-    if (match === null)
-      return link.replace(target, blank(target));
-    if (isOwnIssue(match))
+    if (match !== null && isOwnIssue(match))
       add(at, match[5]);
     return blank(link);
   });
+  rest = rest.replace(/\[(?:\\.|[^[\]\\])*\]\[[^[\]]*\]/g, blank);
   rest = rest.replace(url, (whole, ...groups) => {
     const match = [whole, ...groups.slice(0, 5)];
     if (isOwnIssue(match))
@@ -20227,9 +20240,20 @@ function issueNumbersIn(text, repository, serverUrl) {
   }
   return numbers;
 }
+function blankFences(text) {
+  let fence = null;
+  return text.split(`
+`).map((line) => {
+    const wasFenced = fence !== null;
+    fence = fenceAfter(fence, line);
+    return wasFenced || fence !== null ? " ".repeat(line.length) : line;
+  }).join(`
+`);
+}
 
 // actions/shipped-comments/src/shipped-comments.ts
-var NOTHING = { commented: [], unchanged: [], skipped: [] };
+var NOTHING = { commented: [], unchanged: [], skipped: [], closed: [] };
+var isFixed = (section) => section.trim().toLowerCase() === "fixed";
 function inTurn(items, step) {
   return Array.from(items).reduce((previous, item) => previous.then(() => step(item)), Promise.resolve());
 }
@@ -20257,14 +20281,21 @@ class ShippedComments {
     const references = await this.referencesFor(request);
     if (references.size === 0)
       return NOTHING;
-    const plan = { planned: [], unchanged: [], skipped: [] };
-    await inTurn(references, ([number, entries]) => this.planIssue(number, entries, request, plan));
-    if (plan.planned.length > request.maxComments) {
-      const numbers = plan.planned.map((comment) => `#${comment.number}`).join(", ");
-      throw new Error(`${request.tag} would comment on ${plan.planned.length} issues, more than max-comments (${request.maxComments}): ` + `${numbers}. Nothing was posted.`);
+    const plan = { planned: [], unchanged: [], skipped: [], closing: [] };
+    await inTurn(references, ([number, reference]) => this.planIssue(number, reference, request, plan));
+    const touched = [...new Set([...plan.planned.map((comment) => comment.number), ...plan.closing])];
+    if (touched.length > request.maxComments) {
+      const numbers = touched.map((number) => `#${number}`).join(", ");
+      throw new Error(`${request.tag} would comment on or close ${touched.length} issues, more than max-comments (${request.maxComments}): ` + `${numbers}. Nothing was posted.`);
     }
     await inTurn(plan.planned, (comment) => this.post(comment, request.dryRun));
-    return { commented: plan.planned.map((comment) => comment.number), unchanged: plan.unchanged, skipped: plan.skipped };
+    await inTurn(plan.closing, (number) => this.close(number, request.dryRun));
+    return {
+      commented: plan.planned.map((comment) => comment.number),
+      unchanged: plan.unchanged,
+      skipped: plan.skipped,
+      closed: plan.closing
+    };
   }
   async referencesFor(request) {
     const read = await this.changelogReader.read(request.changelogPaths);
@@ -20283,18 +20314,21 @@ class ShippedComments {
     }
     return references;
   }
-  async planIssue(number, entries, request, plan) {
-    const reason = skipReason(await this.api.getIssue(number));
-    if (reason !== undefined) {
+  async planIssue(number, reference, request, plan) {
+    const issue = await this.api.getIssue(number);
+    const reason = skipReason(issue);
+    if (issue === undefined || reason !== undefined) {
       this.log.info(`Skipping #${number}: ${reason}.`);
       plan.skipped.push(number);
       return;
     }
+    if (request.closeIssues && reference.fixed && issue.open)
+      plan.closing.push(number);
     const body = renderComment({
       tag: request.tag,
       releaseUrl: request.releaseUrl,
       productName: request.productName,
-      entries
+      entries: reference.entries
     });
     const marker = markerFor(request.tag);
     const existing = (await this.api.listComments(number)).find((comment) => comment.byBot && comment.body.startsWith(marker));
@@ -20320,14 +20354,23 @@ ${comment.body}`);
     const done = isNew ? "Commented on" : "Updated the comment on";
     this.log.info(`${done} #${comment.number}.`);
   }
+  async close(number, dryRun) {
+    if (dryRun) {
+      this.log.info(`Dry run: would close #${number} as completed.`);
+      return;
+    }
+    await this.api.closeIssue(number);
+    this.log.info(`Closed #${number} as completed.`);
+  }
   referencesIn(section, request) {
     const references = new Map;
     for (const entry of listEntries(section, request.sections)) {
       for (const number of issueNumbersIn(entry.text, request.repository, request.serverUrl)) {
-        const entries = references.get(number) ?? [];
-        if (!entries.includes(entry.text))
-          entries.push(entry.text);
-        references.set(number, entries);
+        const reference = references.get(number) ?? { entries: [], fixed: false };
+        if (!reference.entries.includes(entry.text))
+          reference.entries.push(entry.text);
+        reference.fixed ||= isFixed(entry.section);
+        references.set(number, reference);
       }
     }
     return references;
@@ -20363,7 +20406,8 @@ function readRequest() {
     releaseUrl,
     productName: getInput("product-name"),
     dryRun: getBooleanInput("dry-run"),
-    maxComments: Number(getInput("max-comments"))
+    maxComments: Number(getInput("max-comments")),
+    closeIssues: getBooleanInput("close-issues")
   };
 }
 async function run() {
@@ -20376,6 +20420,7 @@ async function run() {
     const result = await new ShippedComments(reader, api, exports_core).run(request);
     setOutput("commented", result.commented.join(" "));
     setOutput("skipped", result.skipped.join(" "));
+    setOutput("closed", result.closed.join(" "));
   } catch (error) {
     setFailed(error instanceof Error ? error.message : String(error));
   }

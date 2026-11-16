@@ -1,8 +1,9 @@
 name: Shipped Comments
 description: >-
   Comment on each issue a release's changelog section refers to, saying which
-  version shipped the change. Informs only: it never closes, reopens, labels,
-  assigns or edits an issue. Check out the release source first.
+  version shipped the change. With close-issues, also close the open issues a
+  Fixed entry names. It never reopens, labels, assigns or edits an issue.
+  Check out the release source first.
 inputs:
   tag:
     description: Release tag whose changelog section is read (for example, 3.0.0-alpha.14). Letters, digits and . _ + - only.
@@ -31,9 +32,13 @@ inputs:
     required: false
     default: "false"
   max-comments:
-    description: Fail without posting anything when the release would post or update more comments than this
+    description: Fail without posting anything when the release would comment on or close more issues than this
     required: false
     default: "50"
+  close-issues:
+    description: Close, as completed, each open issue that an entry under Fixed names, after its comment
+    required: false
+    default: "false"
   token:
     description: Token with issues write on the calling repository
     required: false
@@ -43,6 +48,8 @@ outputs:
     description: Space-separated numbers of the issues that got a new or updated comment, or would have in a dry run
   skipped:
     description: Space-separated numbers that were skipped as pull requests, or locked, missing or moved issues
+  closed:
+    description: Space-separated numbers of the issues that were closed, or would have been in a dry run
 runs:
   using: node24
   main: dist/index.js

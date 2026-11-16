@@ -18179,7 +18179,7 @@ function findChangelogSection(content, tag) {
       collecting = !isCode && isReleaseHeading(line, tag);
       continue;
     }
-    if (!isCode && /^##(?:[\t ]|$)/.test(line))
+    if (!isCode && /^ {0,3}##(?:[\t ]|$)/.test(line))
       break;
     sectionLines.push(line);
   }
@@ -18199,7 +18199,7 @@ function fenceAfter(fence, line) {
   return closes ? null : fence;
 }
 function isReleaseHeading(line, tag) {
-  const prefix = /^##[\t ]+/.exec(line);
+  const prefix = /^ {0,3}##[\t ]+/.exec(line);
   if (prefix === null)
     return false;
   const heading = line.slice(prefix[0].length);

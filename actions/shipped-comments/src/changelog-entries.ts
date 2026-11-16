@@ -1,7 +1,7 @@
 import { fenceAfter } from "../../release-notes/src/changelog-section.js";
 
 export interface ChangelogEntry {
-  // The `###` heading the entry sits under.
+  // The ### heading the entry sits under.
   readonly section: string;
   // The list item's text without its marker, continuation lines included.
   readonly text: string;
@@ -12,8 +12,8 @@ const HEADING = /^(#{1,6})(?:[\t ]|$)/;
 
 const sectionKey = (name: string): string => name.trim().toLowerCase();
 
-// Lists the top-level list items under one of `sections` (compared without case); a `####` keeps its `###`.
-// Prose, quotes and anything before the first `###` are never entries.
+// Lists the top-level list items under one of sections (compared without case); a #### keeps its ###.
+// Prose, quotes and anything before the first ### are never entries.
 export function listEntries(body: string, sections: readonly string[]): ChangelogEntry[] {
   const reader = new EntryReader(new Set(sections.map(sectionKey)));
   for (const line of body.split(/\r?\n/)) reader.read(line);
@@ -95,8 +95,7 @@ class EntryReader {
   }
 }
 
-// A heading's text without the #s that may close it, as in "### Fixed ###".
-// Closing #s follow a space; the # of "### C#" is part of the text.
+// Closing #s follow a space: "### Fixed ##" is Fixed, "### C#" stays C#.
 function headingText(rest: string): string {
   const text = rest.trim();
   let end = text.length;

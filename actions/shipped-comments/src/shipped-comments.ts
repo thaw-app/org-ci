@@ -17,15 +17,23 @@ interface PlannedComment {
   readonly existingId: number | undefined;
 }
 
+// The entries that name one issue, and whether one of them is under Fixed.
+interface Reference {
+  readonly entries: string[];
+  fixed: boolean;
+}
+
 interface Plan {
   readonly planned: PlannedComment[];
   readonly unchanged: number[];
   readonly skipped: number[];
+  readonly closing: number[];
 }
 
-const NOTHING: ShippedCommentsResult = { commented: [], unchanged: [], skipped: [] };
+const NOTHING: ShippedCommentsResult = { commented: [], unchanged: [], skipped: [], closed: [] };
+const isFixed = (section: string): boolean => section.trim().toLowerCase() === "fixed";
 
-// GitHub asks clients to send one request at a time, so each step waits for the one before it.
+// GitHub asks clients for one request at a time.
 function inTurn<T>(items: Iterable<T>, step: (item: T) => Promise<void>): Promise<void> {
   return Array.from(items).reduce((previous, item) => previous.then(() => step(item)), Promise.resolve());
 }
@@ -49,22 +57,29 @@ export class ShippedComments {
     const references = await this.referencesFor(request);
     if (references.size === 0) return NOTHING;
 
-    const plan: Plan = { planned: [], unchanged: [], skipped: [] };
-    await inTurn(references, ([number, entries]) => this.planIssue(number, entries, request, plan));
-    if (plan.planned.length > request.maxComments) {
-      const numbers = plan.planned.map((comment) => `#${comment.number}`).join(", ");
+    const plan: Plan = { planned: [], unchanged: [], skipped: [], closing: [] };
+    await inTurn(references, ([number, reference]) => this.planIssue(number, reference, request, plan));
+    const touched = [...new Set([...plan.planned.map((comment) => comment.number), ...plan.closing])];
+    if (touched.length > request.maxComments) {
+      const numbers = touched.map((number) => `#${number}`).join(", ");
       throw new Error(
-        `${request.tag} would comment on ${plan.planned.length} issues, more than max-comments (${request.maxComments}): ` +
+        `${request.tag} would comment on or close ${touched.length} issues, more than max-comments (${request.maxComments}): ` +
           `${numbers}. Nothing was posted.`,
       );
     }
     await inTurn(plan.planned, (comment) => this.post(comment, request.dryRun));
+    await inTurn(plan.closing, (number) => this.close(number, request.dryRun));
 
-    return { commented: plan.planned.map((comment) => comment.number), unchanged: plan.unchanged, skipped: plan.skipped };
+    return {
+      commented: plan.planned.map((comment) => comment.number),
+      unchanged: plan.unchanged,
+      skipped: plan.skipped,
+      closed: plan.closing,
+    };
   }
 
   // Issue number to the entries that mention it; empty when there is nothing to comment.
-  private async referencesFor(request: ShippedCommentsRequest): Promise<Map<number, string[]>> {
+  private async referencesFor(request: ShippedCommentsRequest): Promise<Map<number, Reference>> {
     const read = await this.changelogReader.read(request.changelogPaths);
     if (read.kind === "missing") {
       this.log.warning(`No changelog found in ${request.changelogPaths.join(", ")}; nothing to comment.`);
@@ -82,20 +97,22 @@ export class ShippedComments {
     return references;
   }
 
-  // Sorts one issue into the plan: skipped, already commented, or to comment on.
-  private async planIssue(number: number, entries: string[], request: ShippedCommentsRequest, plan: Plan): Promise<void> {
-    const reason = skipReason(await this.api.getIssue(number));
-    if (reason !== undefined) {
+  // Sorts one issue into the plan: skip, comment, leave as is, and whether to close.
+  private async planIssue(number: number, reference: Reference, request: ShippedCommentsRequest, plan: Plan): Promise<void> {
+    const issue = await this.api.getIssue(number);
+    const reason = skipReason(issue);
+    if (issue === undefined || reason !== undefined) {
       this.log.info(`Skipping #${number}: ${reason}.`);
       plan.skipped.push(number);
       return;
     }
+    if (request.closeIssues && reference.fixed && issue.open) plan.closing.push(number);
 
     const body = renderComment({
       tag: request.tag,
       releaseUrl: request.releaseUrl,
       productName: request.productName,
-      entries,
+      entries: reference.entries,
     });
     const marker = markerFor(request.tag);
     const existing = (await this.api.listComments(number)).find(
@@ -122,14 +139,24 @@ export class ShippedComments {
     this.log.info(`${done} #${comment.number}.`);
   }
 
+  private async close(number: number, dryRun: boolean): Promise<void> {
+    if (dryRun) {
+      this.log.info(`Dry run: would close #${number} as completed.`);
+      return;
+    }
+    await this.api.closeIssue(number);
+    this.log.info(`Closed #${number} as completed.`);
+  }
+
   // Issue number to the entries that mention it, in changelog order.
-  private referencesIn(section: string, request: ShippedCommentsRequest): Map<number, string[]> {
-    const references = new Map<number, string[]>();
+  private referencesIn(section: string, request: ShippedCommentsRequest): Map<number, Reference> {
+    const references = new Map<number, Reference>();
     for (const entry of listEntries(section, request.sections)) {
       for (const number of issueNumbersIn(entry.text, request.repository, request.serverUrl)) {
-        const entries = references.get(number) ?? [];
-        if (!entries.includes(entry.text)) entries.push(entry.text);
-        references.set(number, entries);
+        const reference = references.get(number) ?? { entries: [], fixed: false };
+        if (!reference.entries.includes(entry.text)) reference.entries.push(entry.text);
+        reference.fixed ||= isFixed(entry.section);
+        references.set(number, reference);
       }
     }
     return references;

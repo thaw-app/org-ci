@@ -35,7 +35,10 @@ inputs:
     description: EdDSA private key contents matching SUPublicEDKey
     required: true
   previous-release-count:
-    description: How many prior GitHub release ZIPs to fetch for delta generation
+    description: >-
+      How many prior GitHub release ZIPs to fetch for delta generation. Each
+      must match the signature the existing appcast gives it, or it is dropped.
+      0 fetches none.
     required: false
     default: "3"
   publish-appcast:
@@ -355,6 +358,7 @@ runs:
           seen_versions="$(bundle_version_of "$ZIP_PATH")"
           fetched=0
           while IFS= read -r release_tag; do
+            [[ "$fetched" -ge "$PREVIOUS_COUNT" ]] && break
             [[ -z "$release_tag" || "$release_tag" == "$TAG" ]] && continue
             if download_prior_zip "$release_tag"; then
               prior_zip="$archives/${ASSET_PREFIX}_${release_tag}.zip"
@@ -367,7 +371,6 @@ runs:
               seen_versions+=$'\n'"$version"
               fetched=$((fetched + 1))
             fi
-            [[ "$fetched" -ge "$PREVIOUS_COUNT" ]] && break
           done < <(
             {
               if [[ "$DOWNLOAD_REPO" != "$CALLER_REPO" ]]; then
@@ -408,6 +411,7 @@ runs:
       env:
         TAG: ${{ inputs.tag }}
         CHANNEL: ${{ inputs.channel }}
+        ZIP_PATH: ${{ steps.package.outputs.zip-path }}
         SPARKLE_PRIVATE_KEY: ${{ inputs.sparkle-private-key }}
         DOWNLOAD_REPO: ${{ steps.meta.outputs.download-repository }}
         CALLER_REPO: ${{ github.repository }}
@@ -448,6 +452,35 @@ runs:
             exit 1
             ;;
         esac
+
+        # generate_appcast signs every archive here and drops the notes of the ones it rereads.
+        keep_signed_priors() {
+          local current prior name item signature notes
+          current="$(basename "$ZIP_PATH")"
+          for prior in "$SPARKLE_ARCHIVES"/*.zip; do
+            [[ -e "$prior" ]] || continue
+            name="$(basename "$prior")"
+            [[ "$name" == "$current" ]] && continue
+            item="//item[enclosure[contains(@url, '/${name}')]]"
+            signature=""
+            if [[ "$name" =~ ^[A-Za-z0-9._-]+$ ]]; then
+              signature="$(xmllint --xpath "string(${item}/enclosure/@*[local-name()='edSignature'])" \
+                "$SPARKLE_PAGES/appcast.xml" 2>/dev/null || true)"
+            fi
+            if [[ -z "$signature" ]] \
+              || ! "$SPARKLE_BIN/sign_update" --verify --ed-key-file "$key_file" "$prior" "$signature" >/dev/null 2>&1; then
+              echo "::warning::Dropping ${name}: it does not match its signature in the appcast, so it gets no delta"
+              rm -f "$prior"
+              continue
+            fi
+            echo "Verified ${name} against its signature in the appcast"
+            notes="$(xmllint --xpath "string(${item}/description)" "$SPARKLE_PAGES/appcast.xml" 2>/dev/null || true)"
+            if [[ -n "$notes" ]]; then
+              printf '%s\n' "$notes" > "$SPARKLE_ARCHIVES/${name%.zip}.html"
+            fi
+          done
+        }
+        keep_signed_priors
 
         "$SPARKLE_BIN/generate_appcast" "${args[@]}" "$SPARKLE_ARCHIVES"
 

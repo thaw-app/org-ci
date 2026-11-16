@@ -1,5 +1,7 @@
-// Issue numbers an entry names in the calling repository, in order: issue links, `owner/repo#N`, bare `#N`.
-// Pull request links and other repositories are left out; a bare `#N` can be a pull request, so the caller asks the API.
+import { fenceAfter } from "../../release-notes/src/changelog-section.js";
+
+// Issue numbers an entry names in the calling repository, in order: issue links, owner/repo#N, bare #N.
+// Pull request links and other repositories are left out; a bare #N can be a pull request, so the caller asks the API.
 export function issueNumbersIn(text: string, repository: string, serverUrl: string): number[] {
   const found: { readonly at: number; readonly number: number }[] = [];
   const add = (at: number, value: string | undefined): void => {
@@ -16,15 +18,19 @@ export function issueNumbersIn(text: string, repository: string, serverUrl: stri
   // Each pass blanks what it read, so offsets stay put and nothing is read twice.
   const blank = (value: string): string => " ".repeat(value.length);
 
-  let rest = text.replace(/(`+)[\s\S]*?\1/g, blank);
+  // Code and HTML comments name no issue; an unclosed comment runs to the end.
+  let rest = blankFences(text)
+    .replace(/(`+)[\s\S]*?\1/g, blank)
+    .replace(/<!--[\s\S]*?(?:-->|$)/g, blank);
 
   // A link's text, such as [#687], names the link's target, so it never counts on its own.
   rest = rest.replace(/\[(?:\\.|[^[\]\\])*\]\(([^)\s]*)(?:\s[^)]*)?\)/g, (link: string, target: string, at: number) => {
     const match = new RegExp(url.source, "i").exec(target);
-    if (match === null) return link.replace(target, blank(target));
-    if (isOwnIssue(match)) add(at, match[5]);
+    if (match !== null && isOwnIssue(match)) add(at, match[5]);
     return blank(link);
   });
+  // A reference link like [#7][upstream] is defined outside the entry, so it never counts.
+  rest = rest.replace(/\[(?:\\.|[^[\]\\])*\]\[[^[\]]*\]/g, blank);
   rest = rest.replace(url, (whole: string, ...groups: unknown[]) => {
     const match = [whole, ...groups.slice(0, 5)] as string[];
     if (isOwnIssue(match)) add(groups[5] as number, match[5]);
@@ -43,4 +49,17 @@ export function issueNumbersIn(text: string, repository: string, serverUrl: stri
     if (!numbers.includes(number)) numbers.push(number);
   }
   return numbers;
+}
+
+// Blanks fenced code of either fence, the fence lines included, so offsets stay put.
+function blankFences(text: string): string {
+  let fence: string | null = null;
+  return text
+    .split("\n")
+    .map((line) => {
+      const wasFenced = fence !== null;
+      fence = fenceAfter(fence, line);
+      return wasFenced || fence !== null ? " ".repeat(line.length) : line;
+    })
+    .join("\n");
 }

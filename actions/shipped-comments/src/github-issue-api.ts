@@ -16,8 +16,13 @@ export class GitHubIssueApi implements IssueApi {
     // 301: moved to another repository. Following it would comment there.
     if ([301, 404, 410].includes(response.status)) return undefined;
     await this.check(response, `read #${number}`);
-    const issue = (await response.json()) as { number: number; locked?: boolean; pull_request?: unknown };
-    return { number: issue.number, isPullRequest: issue.pull_request != null, locked: issue.locked === true };
+    const issue = (await response.json()) as { number: number; state?: string; locked?: boolean; pull_request?: unknown };
+    return {
+      number: issue.number,
+      isPullRequest: issue.pull_request != null,
+      locked: issue.locked === true,
+      open: issue.state === "open",
+    };
   }
 
   listComments(number: number): Promise<IssueComment[]> {
@@ -46,6 +51,14 @@ export class GitHubIssueApi implements IssueApi {
   async updateComment(commentId: number, body: string): Promise<void> {
     const response = await this.request("PATCH", `/repos/${this.repository}/issues/comments/${commentId}`, { body });
     await this.check(response, `update comment ${commentId}`);
+  }
+
+  async closeIssue(number: number): Promise<void> {
+    const response = await this.request("PATCH", `/repos/${this.repository}/issues/${number}`, {
+      state: "closed",
+      state_reason: "completed",
+    });
+    await this.check(response, `close #${number}`);
   }
 
   private base(): string {
@@ -77,7 +90,7 @@ export class GitHubIssueApi implements IssueApi {
   }
 }
 
-// The rel="next" target of a Link header, such as <https://…&page=2>; rel="next", <https://…&page=5>; rel="last".
+// The rel="next" URL of a Link header, if there is one.
 function nextPageUrl(link: string | null): string | undefined {
   for (const part of (link ?? "").split(",")) {
     const [target = "", ...params] = part.split(";").map((piece) => piece.trim());

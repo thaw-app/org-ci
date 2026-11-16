@@ -25,6 +25,7 @@ function readRequest(): ShippedCommentsRequest {
     productName: core.getInput("product-name"),
     dryRun: core.getBooleanInput("dry-run"),
     maxComments: Number(core.getInput("max-comments")),
+    closeIssues: core.getBooleanInput("close-issues"),
   };
 }
 
@@ -38,6 +39,7 @@ async function run(): Promise<void> {
     const result = await new ShippedComments(reader, api, core).run(request);
     core.setOutput("commented", result.commented.join(" "));
     core.setOutput("skipped", result.skipped.join(" "));
+    core.setOutput("closed", result.closed.join(" "));
   } catch (error: unknown) {
     core.setFailed(error instanceof Error ? error.message : String(error));
   }

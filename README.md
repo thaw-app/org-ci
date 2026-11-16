@@ -41,7 +41,7 @@ uses: thaw-app/org-ci/actions/publish-file-to-branch@<sha>
 | `actions/block-translation-prs` | Close a pull request that only edits String Catalogs and point to Crowdin |
 | `actions/pr-build-command` | Run a build workflow on a pull request's branch when a maintainer comments `.build` |
 | `actions/remove-skipped-runs` | Delete the repository's skipped workflow runs |
-| `actions/shipped-comments` | Comment on each issue a release's changelog section names, with the version that shipped it (TypeScript, bundled for Node 24) |
+| `actions/shipped-comments` | Comment on each issue a release's changelog section names, with the version that shipped it, and optionally close fixed ones (TypeScript, bundled for Node 24) |
 
 ### Sparkle updates repository
 
@@ -87,6 +87,16 @@ Pass:
 `publish-file-to-branch` needs `contents: write` on the target repo. When
 `updates-repository` is empty, behavior is unchanged and `github.token` is
 enough.
+
+### Delta updates
+
+`sparkle-release` downloads the ZIPs of the last `previous-release-count`
+releases on the same line (default 3) so `generate_appcast` can make deltas
+from them. `generate_appcast` signs every archive it is given with the update
+key, so a downloaded ZIP is kept only when it matches the signature the
+existing appcast already gives it; any other is dropped with a warning and gets
+no delta. A kept ZIP's notes from the appcast go beside it as its `.html`, so
+its item keeps them. `previous-release-count: "0"` downloads none.
 
 ## Repository upkeep actions
 
@@ -279,6 +289,8 @@ version and its channel, and links the release:
 The change below shipped in Thaw [3.0.0-alpha.14](https://github.com/thaw-app/Thaw/releases/tag/3.0.0-alpha.14), an alpha release.
 
 > **Layout warns when items don't fit or macOS hides Focus,** with a one-click fix for each. Reported by @&#8203;JosefGvirt in [#1477](https://github.com/thaw-app/Thaw/issues/1477).
+
+_This is an automated message._
 ```
 
 An entry counts when it is a list item under one of `sections`, including under
@@ -291,13 +303,20 @@ a tag without one. Mentions in the quotes carry a zero-width space, so the
 comment does not notify every contributor named in them.
 
 The first line marks the tag, so running it again for the same tag updates its
-comment, or leaves it alone when nothing changed. It only comments: it never
-closes, reopens, labels, assigns or edits an issue, and it comments on open and
-closed issues alike. A locked, deleted or transferred issue is skipped with a
-log line. `dry-run` logs every comment and posts nothing. When a release would
-post or update more than `max-comments` (default 50) comments, it fails before
-posting any. Thaw's 2.1.0 section, which gathered its betas, names 43 numbers,
-some of them pull requests.
+comment, or leaves it alone when nothing changed. It comments on open and closed
+issues alike. A locked, deleted or transferred issue is skipped with a log line.
+
+With `close-issues: true`, it also closes, as completed, each issue that is
+still open and that an entry under Fixed names, after commenting on it. An
+issue named only under New or Changed stays open, since those entries often
+cover part of a request. Any release closes, pre-releases included; the comment
+says which channel shipped the fix. It never reopens, labels, assigns or edits
+an issue.
+
+`dry-run` logs every comment and every close and changes nothing. When a
+release would comment on or close more than `max-comments` (default 50)
+issues, it fails before changing any. Thaw's 2.1.0 section, which gathered its
+betas, names 43 numbers, some of them pull requests.
 
 Run it after the release is public, so the link works, in a job with
 `issues: write` that checks out the tag:
@@ -319,6 +338,7 @@ comment-shipped:
       with:
         tag: ${{ needs.meta.outputs.tag }}
         product-name: MyApp
+        close-issues: true
 ```
 
 | Input | Default | Purpose |
@@ -328,13 +348,15 @@ comment-shipped:
 | `sections` | `New`, `Changed`, `Fixed` | `###` sections whose entries count, one per line, any case |
 | `product-name` | empty | Put before the version, such as `Thaw` |
 | `release-url` | the caller's release for the tag | Link in the comment |
-| `dry-run` | `false` | Log the comments, post nothing |
-| `max-comments` | `50` | Fail without posting when more comments would be written |
+| `dry-run` | `false` | Log the comments and closes, change nothing |
+| `max-comments` | `50` | Fail without changing anything when more issues would get a comment or be closed |
+| `close-issues` | `false` | Close the open issues that a Fixed entry names, as completed |
 | `token` | `github.token` | Needs `issues: write` |
 
 Outputs: `commented`, the issues that got a new or updated comment (or would
-have in a dry run), and `skipped`, the numbers skipped as pull requests or
-locked, missing or moved issues. Both are space-separated.
+have in a dry run), `skipped`, the numbers skipped as pull requests or locked,
+missing or moved issues, and `closed`, the issues that were closed (or would
+have been). All are space-separated.
 
 ## Reusable workflows
 

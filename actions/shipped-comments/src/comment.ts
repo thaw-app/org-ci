@@ -48,6 +48,8 @@ export function renderComment(content: CommentContent): string {
     "",
     quotes.join("\n\n"),
     "",
+    "_This is an automated message._",
+    "",
   ].join("\n");
 }
 

@@ -26,7 +26,7 @@ test("bundled action runs in Node and comments through the REST API", async () =
     request.on("end", () => {
       requests.push(`${request.method} ${request.url} ${request.headers.authorization} ${body}`);
       response.setHeader("content-type", "application/json");
-      if (request.url === "/repos/o/r/issues/7") response.end(JSON.stringify({ number: 7, locked: false }));
+      if (request.url === "/repos/o/r/issues/7") response.end(JSON.stringify({ number: 7, state: "open", locked: false }));
       else if (request.url === "/repos/o/r/issues/8") response.end(JSON.stringify({ number: 8, pull_request: {} }));
       else if (request.url?.startsWith("/repos/o/r/issues/7/comments")) {
         response.statusCode = request.method === "POST" ? 201 : 200;
@@ -57,6 +57,7 @@ test("bundled action runs in Node and comments through the REST API", async () =
       "INPUT_RELEASE-URL": "",
       "INPUT_DRY-RUN": "false",
       "INPUT_MAX-COMMENTS": "50",
+      "INPUT_CLOSE-ISSUES": "true",
       INPUT_TOKEN: "secret",
     });
     assert.equal(result.status, 0, result.stdout);
@@ -65,12 +66,17 @@ test("bundled action runs in Node and comments through the REST API", async () =
     const body = JSON.parse(posted.slice(posted.indexOf("{"))) as { body: string };
     assert.equal(
       body.body,
-      "<!-- shipped-in 1.0.0-rc.1 -->\nThe change below shipped in App [1.0.0-rc.1](https://github.com/o/r/releases/tag/1.0.0-rc.1), a release candidate.\n\n> Bug (#7, #8)\n",
+      "<!-- shipped-in 1.0.0-rc.1 -->\nThe change below shipped in App [1.0.0-rc.1](https://github.com/o/r/releases/tag/1.0.0-rc.1), a release candidate.\n\n> Bug (#7, #8)\n\n_This is an automated message._\n",
+    );
+    assert.ok(
+      requests.includes('PATCH /repos/o/r/issues/7 Bearer secret {"state":"closed","state_reason":"completed"}'),
+      requests.join("\n"),
     );
     assert.ok(!requests.some((line) => line.includes("/issues/9")));
     const outputs = readFileSync(output, "utf8");
     assert.match(outputs, /commented<<[^\n]+\n7\n/);
     assert.match(outputs, /skipped<<[^\n]+\n8\n/);
+    assert.match(outputs, /closed<<[^\n]+\n7\n/);
   } finally {
     server.close();
     rmSync(workspace, { recursive: true, force: true });
