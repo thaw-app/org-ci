@@ -17808,17 +17808,6 @@ __export(exports_core, {
   warning: () => warning
 });
 
-// node_modules/@actions/core/lib/platform.js
-var exports_platform = {};
-__export(exports_platform, {
-  arch: () => arch,
-  getDetails: () => getDetails,
-  isLinux: () => isLinux,
-  isMacOS: () => isMacOS,
-  isWindows: () => isWindows,
-  platform: () => platform
-});
-
 // node_modules/@actions/core/lib/command.js
 var os = __toESM(require("os"), 1);
 
@@ -18898,6 +18887,15 @@ function toPlatformPath(pth) {
   return pth.replace(/[/\\]/g, path.sep);
 }
 // node_modules/@actions/core/lib/platform.js
+var exports_platform = {};
+__export(exports_platform, {
+  arch: () => arch,
+  getDetails: () => getDetails,
+  isLinux: () => isLinux,
+  isMacOS: () => isMacOS,
+  isWindows: () => isWindows,
+  platform: () => platform
+});
 var import_os2 = __toESM(require("os"), 1);
 
 // node_modules/@actions/exec/lib/exec.js
