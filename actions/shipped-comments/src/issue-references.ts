@@ -25,6 +25,8 @@ export function issueNumbersIn(text: string, repository: string, serverUrl: stri
     if (isOwnIssue(match)) add(at, match[5]);
     return blank(link);
   });
+  // A reference link such as [#7][upstream] is defined outside the entry, so its target is unknown and it never counts.
+  rest = rest.replace(/\[(?:\\.|[^[\]\\])*\]\[[^[\]]*\]/g, blank);
   rest = rest.replace(url, (whole: string, ...groups: unknown[]) => {
     const match = [whole, ...groups.slice(0, 5)] as string[];
     if (isOwnIssue(match)) add(groups[5] as number, match[5]);

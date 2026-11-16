@@ -134,6 +134,7 @@ test("pull requests, other repositories and code are not issue references", () =
     "[#687](https://github.com/stonerl/Thaw/issues/687)",
     String.raw`[Fix #689 and \[more](https://github.com/stonerl/Thaw/issues/689)`,
     `[#690](https://github.com/stonerl/Thaw/issues/690 "a title")`,
+    "[#691][upstream] and [#692][]",
     "stonerl/Thaw#688 and thaw-app/Floe#12",
     "https://github.com/thaw-app/Floe/issues/13",
     "A fix with a `#999` in code.",
@@ -176,6 +177,8 @@ test("the comment names the version, its channel and the release, and quotes the
       "> Two",
       "> lines",
       "",
+      "_This is an automated message._",
+      "",
     ].join("\n"),
   );
   assert.match(
@@ -201,9 +204,9 @@ class FakeIssues implements IssueApi {
   private nextId = 1;
 
   constructor(numbers: number[], pulls: number[] = [], locked: number[] = []) {
-    for (const number of numbers) this.issues.set(number, { number, isPullRequest: false, locked: false });
-    for (const number of pulls) this.issues.set(number, { number, isPullRequest: true, locked: false });
-    for (const number of locked) this.issues.set(number, { number, isPullRequest: false, locked: true });
+    for (const number of numbers) this.issues.set(number, { number, isPullRequest: false, locked: false, open: true });
+    for (const number of pulls) this.issues.set(number, { number, isPullRequest: true, locked: false, open: true });
+    for (const number of locked) this.issues.set(number, { number, isPullRequest: false, locked: true, open: true });
   }
 
   async getIssue(number: number): Promise<Issue | undefined> {
@@ -226,6 +229,13 @@ class FakeIssues implements IssueApi {
     this.writes.push(`update #${comment.issue}`);
     this.comments.set(commentId, { ...comment, body });
   }
+
+  async closeIssue(number: number): Promise<void> {
+    const issue = this.issues.get(number);
+    assert.ok(issue);
+    this.writes.push(`close #${number}`);
+    this.issues.set(number, { ...issue, open: false });
+  }
 }
 
 const logs: string[] = [];
@@ -241,6 +251,7 @@ const request: ShippedCommentsRequest = {
   productName: "Thaw",
   dryRun: false,
   maxComments: 50,
+  closeIssues: false,
 };
 
 // Every issue the fixture's alpha.14 New, Changed and Fixed entries name.
@@ -249,7 +260,7 @@ const ISSUES = [1477, 1378, 1244, 1265, 1513, 1492, 1493, 1494, 1070];
 test("one comment per issue, quoting every entry that names it", async () => {
   const api = new FakeIssues(ISSUES);
   const result = await new ShippedComments(new FixtureReader(CHANGELOG), api, logger).run(request);
-  assert.deepEqual(result, { commented: ISSUES, unchanged: [], skipped: [] });
+  assert.deepEqual(result, { commented: ISSUES, unchanged: [], skipped: [], closed: [] });
   assert.deepEqual(api.writes, ISSUES.map((n) => `create #${n}`));
   const on1477 = (await api.listComments(1477))[0]?.body ?? "";
   assert.ok(on1477.startsWith(`${markerFor("3.0.0-alpha.14")}\nThe changes below shipped in Thaw [3.0.0-alpha.14]`));
@@ -272,7 +283,7 @@ test("a second run for the same tag updates its comment instead of posting again
   const action = new ShippedComments(new FixtureReader(CHANGELOG), api, logger);
   await action.run(request);
   const again = await action.run(request);
-  assert.deepEqual(again, { commented: [], unchanged: ISSUES, skipped: [] });
+  assert.deepEqual(again, { commented: [], unchanged: ISSUES, skipped: [], closed: [] });
 
   const edited = CHANGELOG.replace("Layout warns when items don't fit.", "Layout warns when items don't fit, now.");
   const result = await new ShippedComments(new FixtureReader(edited), api, logger).run(request);
@@ -285,7 +296,7 @@ test("a second run for the same tag updates its comment instead of posting again
   const quoted = [...api.comments.values()].find((comment) => comment.issue === 1449);
   assert.ok(quoted);
   api.comments.set(quoted.id, { ...quoted, byBot: false });
-  api.issues.set(1449, { number: 1449, isPullRequest: false, locked: false });
+  api.issues.set(1449, { number: 1449, isPullRequest: false, locked: false, open: true });
   const older = await new ShippedComments(new FixtureReader(CHANGELOG), api, logger).run({ ...request, tag: "3.0.0-alpha.13" });
   assert.deepEqual(older.commented, [1449]);
   assert.equal((await api.listComments(1449)).length, 2);
@@ -304,16 +315,50 @@ test("more comments than the cap fail the run before anything is posted", async 
   const api = new FakeIssues(ISSUES);
   await assert.rejects(
     new ShippedComments(new FixtureReader(CHANGELOG), api, logger).run({ ...request, maxComments: 8 }),
-    /would comment on 9 issues, more than max-comments \(8\).*Nothing was posted/,
+    /would comment on or close 9 issues, more than max-comments \(8\).*Nothing was posted/,
   );
   assert.deepEqual(api.writes, []);
+});
+
+// The open issues the fixture's alpha.14 Fixed entries name. 1477 also has a New entry.
+const FIXED = [1477, 1513, 1492, 1493, 1494, 1070];
+
+test("with close-issues, open issues a Fixed entry names are closed after their comment", async () => {
+  const api = new FakeIssues(ISSUES);
+  api.issues.set(1513, { number: 1513, isPullRequest: false, locked: false, open: false });
+  const action = new ShippedComments(new FixtureReader(CHANGELOG), api, logger);
+  const result = await action.run({ ...request, closeIssues: true });
+  const closed = FIXED.filter((n) => n !== 1513);
+  assert.deepEqual(result.closed, closed);
+  assert.deepEqual(api.writes, [...ISSUES.map((n) => `create #${n}`), ...closed.map((n) => `close #${n}`)]);
+  for (const n of [1378, 1244, 1265]) assert.equal(api.issues.get(n)?.open, true, `#${n}`);
+
+  // Closed issues stay closed; a second run changes nothing.
+  const again = await action.run({ ...request, closeIssues: true });
+  assert.deepEqual(again.closed, []);
+  assert.equal(api.writes.length, ISSUES.length + closed.length);
+});
+
+test("closing counts toward max-comments, and a dry run only logs it", async () => {
+  const api = new FakeIssues(ISSUES);
+  const action = new ShippedComments(new FixtureReader(CHANGELOG), api, logger);
+  await action.run(request);
+  await assert.rejects(
+    action.run({ ...request, closeIssues: true, maxComments: 5 }),
+    /would comment on or close 6 issues, more than max-comments \(5\)/,
+  );
+  logs.length = 0;
+  const dry = await action.run({ ...request, closeIssues: true, dryRun: true });
+  assert.deepEqual(dry.closed, FIXED);
+  assert.ok(logs.includes("Dry run: would close #1477 as completed."));
+  assert.deepEqual(api.writes, ISSUES.map((n) => `create #${n}`));
 });
 
 test("a missing changelog or section posts nothing and does not fail", async () => {
   const api = new FakeIssues(ISSUES);
   for (const reader of [new FixtureReader(undefined), new FixtureReader("## [2.0.0]\n- #1477")]) {
     assert.deepEqual(await new ShippedComments(reader, api, logger).run(request), {
-      commented: [], unchanged: [], skipped: [],
+      commented: [], unchanged: [], skipped: [], closed: [],
     });
   }
   assert.deepEqual(api.writes, []);
@@ -331,7 +376,7 @@ test("a tag that cannot go into a marker and a bad cap are refused", async () =>
 test("the API client reads issues, skips moved ones and follows comment pages", async () => {
   const calls: string[] = [];
   const responses: Record<string, () => Response> = {
-    "GET https://api.test/repos/o/r/issues/1": () => Response.json({ number: 1, locked: false }),
+    "GET https://api.test/repos/o/r/issues/1": () => Response.json({ number: 1, state: "open", locked: false }),
     "GET https://api.test/repos/o/r/issues/2": () => Response.json({ number: 2, pull_request: {} }),
     "GET https://api.test/repos/o/r/issues/3": () => new Response(null, { status: 301 }),
     "GET https://api.test/repos/o/r/issues/4": () => new Response("{}", { status: 404 }),
@@ -353,10 +398,13 @@ test("the API client reads issues, skips moved ones and follows comment pages", 
       }),
     "POST https://api.test/repos/o/r/issues/1/comments": () => new Response("{}", { status: 201 }),
     "PATCH https://api.test/repos/o/r/issues/comments/11": () => new Response("{}", { status: 403 }),
+    "PATCH https://api.test/repos/o/r/issues/1": () => Response.json({ number: 1, state: "closed" }),
   };
+  const sent: Record<string, unknown> = {};
   const fake = (async (url: string | URL | Request, init?: RequestInit) => {
     const key = `${init?.method} ${String(url)}`;
     calls.push(key);
+    sent[key] = init?.body;
     assert.equal(init?.redirect, "manual");
     const respond = responses[key];
     assert.ok(respond, key);
@@ -364,8 +412,8 @@ test("the API client reads issues, skips moved ones and follows comment pages", 
   }) as typeof fetch;
   const api = new GitHubIssueApi("https://api.test/", "o/r", "token", fake);
 
-  assert.deepEqual(await api.getIssue(1), { number: 1, isPullRequest: false, locked: false });
-  assert.deepEqual(await api.getIssue(2), { number: 2, isPullRequest: true, locked: false });
+  assert.deepEqual(await api.getIssue(1), { number: 1, isPullRequest: false, locked: false, open: true });
+  assert.deepEqual(await api.getIssue(2), { number: 2, isPullRequest: true, locked: false, open: false });
   assert.equal(await api.getIssue(3), undefined);
   assert.equal(await api.getIssue(4), undefined);
   assert.deepEqual(await api.listComments(1), [
@@ -374,4 +422,6 @@ test("the API client reads issues, skips moved ones and follows comment pages", 
   ]);
   await api.createComment(1, "hi");
   await assert.rejects(api.updateComment(11, "hi"), /HTTP 403/);
+  await api.closeIssue(1);
+  assert.equal(sent["PATCH https://api.test/repos/o/r/issues/1"], '{"state":"closed","state_reason":"completed"}');
 });

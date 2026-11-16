@@ -4,6 +4,7 @@ export interface Issue {
   readonly number: number;
   readonly isPullRequest: boolean;
   readonly locked: boolean;
+  readonly open: boolean;
 }
 
 export interface IssueComment {
@@ -19,6 +20,8 @@ export interface IssueApi {
   listComments(number: number): Promise<IssueComment[]>;
   createComment(number: number, body: string): Promise<void>;
   updateComment(commentId: number, body: string): Promise<void>;
+  // Closes the issue as completed.
+  closeIssue(number: number): Promise<void>;
 }
 
 export interface Logger {
@@ -36,6 +39,8 @@ export interface ShippedCommentsRequest {
   readonly productName: string;
   readonly dryRun: boolean;
   readonly maxComments: number;
+  // Close the open issues that a Fixed entry names.
+  readonly closeIssues: boolean;
 }
 
 export interface ShippedCommentsResult {
@@ -45,4 +50,6 @@ export interface ShippedCommentsResult {
   readonly unchanged: readonly number[];
   // Numbers that were skipped: pull requests, locked, missing or moved issues.
   readonly skipped: readonly number[];
+  // Issues that were closed, or would have been in a dry run.
+  readonly closed: readonly number[];
 }
