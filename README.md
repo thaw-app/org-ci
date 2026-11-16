@@ -36,7 +36,6 @@ uses: thaw-app/org-ci/actions/publish-file-to-branch@<sha>
 | `actions/checkout-source` | Check out the caller at a ref and report its Xcode project and deployment target |
 | `actions/pr-metadata` | Label a pull request from its template and changed paths, and check its title and body |
 | `actions/dependency-sca` | Scan lockfiles with OSV-Scanner and fail on a vulnerability that is not suppressed |
-| `actions/zizmor` | Audit workflows and actions with zizmor, fail on a finding and upload SARIF to code scanning |
 | `actions/close-stale-issues` | Mark inactive issues stale, then close them |
 | `actions/block-translation-prs` | Close a pull request that only edits String Catalogs and point to Crowdin |
 | `actions/pr-build-command` | Run a build workflow on a pull request's branch when a maintainer comments `.build` |
@@ -171,7 +170,7 @@ request template must use the same labels as the rules.
 
 ### CI steps
 
-`detect-code-changes`, `sonar-scan` and `zizmor` are the parts of an app's CI
+`detect-code-changes` and `sonar-scan` are the parts of an app's CI
 workflow that do not depend on how the app builds.
 
 `detect-code-changes` reports `code` as `"true"` when a pull request or a push
@@ -228,14 +227,13 @@ on a docs-only change and skip its own steps: GitHub skips a job whose `needs`
 were skipped, and the scan would never restore the cached coverage. Keep the report paths out of `sonar-project.properties`: a
 report exists only when this run built or restored it.
 
-`zizmor` audits the repository's workflows, composite actions and
-`dependabot.yml` for security problems, as actionlint checks their syntax. It
-fails the job on a finding that is not ignored and uploads the findings as SARIF
-to code scanning. The job needs `contents: read`, `actions: read` and
-`security-events: write`. A pull request from a fork, or from Dependabot, gets a
-token that cannot write security events, so the action skips the upload for
-them with the same rule as `SONAR_ENABLED` above; the audit still runs and
-still fails the job on a finding.
+For zizmor, use the official `zizmorcore/zizmor-action` in two steps. It
+audits the repository's workflows, composite actions and `dependabot.yml` for
+security problems. SARIF output never fails on a finding, so one step uploads
+the findings to code scanning and a second fails the job and annotates the pull
+request. A pull request from a fork, or from Dependabot, gets a token that
+cannot write security events, so the upload step skips them with the same rule
+as `SONAR_ENABLED` above. Pin `version` to the zizmor in the `ci-tools` image.
 
 ```yaml
 zizmor:
@@ -248,17 +246,25 @@ zizmor:
     - uses: actions/checkout@<sha>
       with:
         persist-credentials: false
-    - uses: thaw-app/org-ci/actions/zizmor@<sha>
+    - if: >-
+        ${{
+          github.actor != 'dependabot[bot]'
+          && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository)
+        }}
+      uses: zizmorcore/zizmor-action@<sha>
+      with:
+        version: "1.32.0"
+    - if: ${{ !cancelled() }}
+      uses: zizmorcore/zizmor-action@<sha>
+      with:
+        version: "1.32.0"
+        advanced-security: false
+        annotations: true
 ```
 
-On a Linux x64 runner the action downloads the pinned zizmor release and checks
-its SHA-256; in the `ci-tools` image it uses the zizmor there. The run's token feeds
-zizmor's online audits, which look up the pinned actions; pass `token: ""` to
-run the offline audits only. Ignore a finding in `.github/zizmor.yml`, which
-zizmor finds on its own, or with a `# zizmor: ignore[<audit>]` comment on the
-line, which is the only way to ignore one in a composite action. Give each
-ignore a reason. `persona` and `min-severity` widen or narrow the audits;
-`paths` limits them to some files.
+Ignore a finding in `.github/zizmor.yml`, which zizmor finds on its own, or with
+a `# zizmor: ignore[<audit>]` comment on the line, which is the only way to
+ignore one in a composite action. Give each ignore a reason.
 
 ### Checking out a release
 
@@ -700,9 +706,10 @@ Run `bun install --frozen-lockfile`, then `bun run typecheck`, `bun run test`, a
 
 `zizmor .` from the repository root audits this repository's workflows and
 actions with the ignores in `.github/zizmor.yml`. The `zizmor` workflow runs it
-in CI through `actions/zizmor`.
+in CI through `zizmorcore/zizmor-action`, pinned to the same zizmor as the
+`ci-tools` image.
 
-On macOS, `python3 -m unittest discover -s tests -p '*_test.py' -v` tests the signing action scripts, the `dependency-sca` suppression check, the `checkout-source` deployment target lookup and the arguments `zizmor` passes.
+On macOS, `python3 -m unittest discover -s tests -p '*_test.py' -v` tests the signing action scripts, the `dependency-sca` suppression check, the `checkout-source` deployment target lookup and the zizmor version the workflow pins.
 These tests use scratch directories and mock the archive and CMS boundaries; they need no signing credentials
 and never import a certificate, build an app, or contact the notary service. CI runs them on a macOS runner.
 

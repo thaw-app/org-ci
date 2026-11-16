@@ -36,5 +36,22 @@ jobs:
         with:
           persist-credentials: false
 
-      # The action from this checkout, so a pull request that changes it audits with its own version.
-      - uses: ./actions/zizmor
+      # SARIF output never fails on a finding. A fork's pull request and
+      # Dependabot get a token that cannot write security events.
+      - name: Upload findings to code scanning
+        if: >-
+          ${{
+            github.actor != 'dependabot[bot]'
+            && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository)
+          }}
+        uses: zizmorcore/zizmor-action@45d7276c9ca790aabd705e31ca99c6185c3e76dd # v0.8.1
+        with:
+          version: "1.32.0"
+
+      - name: Audit workflows and actions
+        if: ${{ !cancelled() }}
+        uses: zizmorcore/zizmor-action@45d7276c9ca790aabd705e31ca99c6185c3e76dd # v0.8.1
+        with:
+          version: "1.32.0"
+          advanced-security: false
+          annotations: true
