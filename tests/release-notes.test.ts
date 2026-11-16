@@ -92,6 +92,11 @@ test("a shorter or different fence does not close a code block", async () => {
   assert.deepEqual(await resolveContent(content), changelogNotes("````md\n```\n~~~\n## example\n````\nEnd"));
 });
 
+test("a heading indented up to three spaces still starts and ends a section", async () => {
+  assert.deepEqual(await resolveContent("   ## [1.0.0]\nNotes\n ## [0.9.0]\nOld"), changelogNotes("Notes"));
+  assert.deepEqual(await resolveContent("## [1.0.0]\nNotes\n    ## [0.9.0] is code\nEnd"), changelogNotes("Notes\n    ## [0.9.0] is code\nEnd"));
+});
+
 test("distinguishes absent sections from empty sections", async () => {
   assert.deepEqual(await resolveContent("## [2.0.0]\nOther"), {
     kind: "missing", reason: "section-not-found", path: "CHANGELOG.md",

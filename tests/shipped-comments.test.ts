@@ -121,6 +121,7 @@ test("each reference form names an issue of the calling repository", () => {
     ["See https://github.com/thaw-app/Thaw/issues/1478#issuecomment-1 too", [1478]],
     ["Fixed (#1492).", [1492]],
     ["Fixes #1493.", [1493]],
+    ["~~~\ncode\n~~~\nAfter the code, #1496 <!-- note --> #1497.", [1496, 1497]],
     ["Also thaw-app/thaw#1494.", [1494]],
     [`Twice: ${issue(1495)} and #1495.`, [1495]],
   ];
@@ -139,6 +140,10 @@ test("pull requests, other repositories and code are not issue references", () =
     "https://github.com/thaw-app/Floe/issues/13",
     "A fix with a `#999` in code.",
     "[docs](https://example.com/page#12) and C# and &#8203;",
+    "[#7](https://tracker.example/ticket/123) and [see #8](../notes.md)",
+    "~~~\ngh issue close #333\n~~~",
+    "````\n```\n#336\n````",
+    "Hidden <!-- #334 --> and <!-- unclosed #335",
   ]) {
     assert.deepEqual(issueNumbersIn(text, REPO, SERVER), [], text);
   }

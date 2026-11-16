@@ -19,7 +19,7 @@ export function findChangelogSection(content: string, tag: string): string | und
       collecting = !isCode && isReleaseHeading(line, tag);
       continue;
     }
-    if (!isCode && /^##(?:[\t ]|$)/.test(line)) break;
+    if (!isCode && /^ {0,3}##(?:[\t ]|$)/.test(line)) break;
     sectionLines.push(line);
   }
 
@@ -43,7 +43,7 @@ export function fenceAfter(fence: string | null, line: string): string | null {
 }
 
 function isReleaseHeading(line: string, tag: string): boolean {
-  const prefix = /^##[\t ]+/.exec(line);
+  const prefix = /^ {0,3}##[\t ]+/.exec(line);
   if (prefix === null) return false;
 
   const heading = line.slice(prefix[0].length);

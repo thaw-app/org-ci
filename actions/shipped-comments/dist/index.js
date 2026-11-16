@@ -20018,7 +20018,7 @@ function findChangelogSection(content, tag) {
       collecting = !isCode && isReleaseHeading(line, tag);
       continue;
     }
-    if (!isCode && /^##(?:[\t ]|$)/.test(line))
+    if (!isCode && /^ {0,3}##(?:[\t ]|$)/.test(line))
       break;
     sectionLines.push(line);
   }
@@ -20038,7 +20038,7 @@ function fenceAfter(fence, line) {
   return closes ? null : fence;
 }
 function isReleaseHeading(line, tag) {
-  const prefix = /^##[\t ]+/.exec(line);
+  const prefix = /^ {0,3}##[\t ]+/.exec(line);
   if (prefix === null)
     return false;
   const heading = line.slice(prefix[0].length);
@@ -20211,12 +20211,10 @@ function issueNumbersIn(text, repository, serverUrl) {
   const url = /https?:\/\/([^/\s)>\]]+)\/([\w.-]+)\/([\w.-]+)\/(issues|pull|pulls)\/(\d+)[^\s)>\]]*/gi;
   const isOwnIssue = (match) => match[1]?.toLowerCase() === host && `${match[2]}/${match[3]}`.toLowerCase() === self && match[4]?.toLowerCase() === "issues";
   const blank = (value) => " ".repeat(value.length);
-  let rest = text.replace(/(`+)[\s\S]*?\1/g, blank);
+  let rest = blankFences(text).replace(/(`+)[\s\S]*?\1/g, blank).replace(/<!--[\s\S]*?(?:-->|$)/g, blank);
   rest = rest.replace(/\[(?:\\.|[^[\]\\])*\]\(([^)\s]*)(?:\s[^)]*)?\)/g, (link, target, at) => {
     const match = new RegExp(url.source, "i").exec(target);
-    if (match === null)
-      return link.replace(target, blank(target));
-    if (isOwnIssue(match))
+    if (match !== null && isOwnIssue(match))
       add(at, match[5]);
     return blank(link);
   });
@@ -20241,6 +20239,16 @@ function issueNumbersIn(text, repository, serverUrl) {
       numbers.push(number);
   }
   return numbers;
+}
+function blankFences(text) {
+  let fence = null;
+  return text.split(`
+`).map((line) => {
+    const wasFenced = fence !== null;
+    fence = fenceAfter(fence, line);
+    return wasFenced || fence !== null ? " ".repeat(line.length) : line;
+  }).join(`
+`);
 }
 
 // actions/shipped-comments/src/shipped-comments.ts
