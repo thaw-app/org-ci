@@ -1,5 +1,5 @@
-// Issue numbers an entry names in the calling repository, in order: issue links, `owner/repo#N`, bare `#N`.
-// Pull request links and other repositories are left out; a bare `#N` can be a pull request, so the caller asks the API.
+// Issue numbers an entry names in the calling repository, in order: issue links, owner/repo#N, bare #N.
+// Pull request links and other repositories are left out; a bare #N can be a pull request, so the caller asks the API.
 export function issueNumbersIn(text: string, repository: string, serverUrl: string): number[] {
   const found: { readonly at: number; readonly number: number }[] = [];
   const add = (at: number, value: string | undefined): void => {
@@ -25,7 +25,7 @@ export function issueNumbersIn(text: string, repository: string, serverUrl: stri
     if (isOwnIssue(match)) add(at, match[5]);
     return blank(link);
   });
-  // A reference link such as [#7][upstream] is defined outside the entry, so its target is unknown and it never counts.
+  // A reference link like [#7][upstream] is defined outside the entry, so it never counts.
   rest = rest.replace(/\[(?:\\.|[^[\]\\])*\]\[[^[\]]*\]/g, blank);
   rest = rest.replace(url, (whole: string, ...groups: unknown[]) => {
     const match = [whole, ...groups.slice(0, 5)] as string[];

@@ -33,7 +33,7 @@ interface Plan {
 const NOTHING: ShippedCommentsResult = { commented: [], unchanged: [], skipped: [], closed: [] };
 const isFixed = (section: string): boolean => section.trim().toLowerCase() === "fixed";
 
-// GitHub asks clients to send one request at a time, so each step waits for the one before it.
+// GitHub asks clients for one request at a time.
 function inTurn<T>(items: Iterable<T>, step: (item: T) => Promise<void>): Promise<void> {
   return Array.from(items).reduce((previous, item) => previous.then(() => step(item)), Promise.resolve());
 }
@@ -97,7 +97,7 @@ export class ShippedComments {
     return references;
   }
 
-  // Sorts one issue into the plan: skipped, already commented, or to comment on, and whether to close it.
+  // Sorts one issue into the plan: skip, comment, leave as is, and whether to close.
   private async planIssue(number: number, reference: Reference, request: ShippedCommentsRequest, plan: Plan): Promise<void> {
     const issue = await this.api.getIssue(number);
     const reason = skipReason(issue);

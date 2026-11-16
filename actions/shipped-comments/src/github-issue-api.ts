@@ -90,7 +90,7 @@ export class GitHubIssueApi implements IssueApi {
   }
 }
 
-// The rel="next" target of a Link header, such as <https://…&page=2>; rel="next", <https://…&page=5>; rel="last".
+// The rel="next" URL of a Link header, if there is one.
 function nextPageUrl(link: string | null): string | undefined {
   for (const part of (link ?? "").split(",")) {
     const [target = "", ...params] = part.split(";").map((piece) => piece.trim());
