@@ -39,6 +39,8 @@ For Thaw's current behavior, keep `generate_release_notes: false`. For Floe's cu
 
 `ReleaseNotesResolver.resolve(request)` owns validation, override precedence, candidate selection, and section extraction. Its result distinguishes resolved notes from a missing changelog, missing section, or empty section. Only the GitHub adapter translates those outcomes into `body`, `generate`, and `source` outputs.
 
+The section lookup lives in `changelog-section.ts`, which `shipped-comments` uses too, so both actions read the same lines for a tag.
+
 The resolver accepts a `ChangelogReader`; `FileChangelogReader` implements filesystem access. Tests exercise the resolver using both a fixture reader and temporary files. Filesystem failures other than missing files propagate to the adapter and fail the action.
 
 ## Development
@@ -53,4 +55,4 @@ bun run check:dist
 bun audit
 ```
 
-Tests include executing the bundle under Node. CI installs Node 24 for these checks. Locally, install Node as well as Bun. Commit `dist/index.js` and `bun.lock` when changing source or dependencies. `check:dist` first requires the bundle to be tracked, then rebuilds it and checks for a diff.
+Tests include executing the bundle under Node. CI installs Node 24 for these checks. Locally, install Node as well as Bun. Commit `dist/index.js` and `bun.lock` when changing source or dependencies, and rebuild `actions/shipped-comments/dist` too when `changelog-section.ts` or the reader changes. `check:dist` first requires the bundle to be tracked, then rebuilds it and checks for a diff.

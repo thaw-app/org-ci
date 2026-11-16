@@ -1,0 +1,48 @@
+name: Shipped Comments
+description: >-
+  Comment on each issue a release's changelog section refers to, saying which
+  version shipped the change. Informs only: it never closes, reopens, labels,
+  assigns or edits an issue. Check out the release source first.
+inputs:
+  tag:
+    description: Release tag whose changelog section is read (for example, 3.0.0-alpha.14). Letters, digits and . _ + - only.
+    required: true
+  changelog-paths:
+    description: Newline-separated candidate paths, relative to the workspace. The first existing file is used.
+    required: false
+    default: CHANGELOG.md
+  sections:
+    description: Newline-separated `###` sections whose list entries count. Matched without case.
+    required: false
+    default: |
+      New
+      Changed
+      Fixed
+  product-name:
+    description: Name put before the version in the comment, such as Thaw. Empty leaves it out.
+    required: false
+    default: ""
+  release-url:
+    description: Link to the release. Empty links the calling repository's release for the tag.
+    required: false
+    default: ""
+  dry-run:
+    description: Log each comment it would post or update, and post nothing
+    required: false
+    default: "false"
+  max-comments:
+    description: Fail without posting anything when the release would post or update more comments than this
+    required: false
+    default: "50"
+  token:
+    description: Token with issues write on the calling repository
+    required: false
+    default: ${{ github.token }}
+outputs:
+  commented:
+    description: Space-separated numbers of the issues that got a new or updated comment, or would have in a dry run
+  skipped:
+    description: Space-separated numbers that were skipped as pull requests, or locked, missing or moved issues
+runs:
+  using: node24
+  main: dist/index.js

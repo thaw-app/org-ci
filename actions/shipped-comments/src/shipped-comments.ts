@@ -1,0 +1,151 @@
+import { findChangelogSection } from "../../release-notes/src/changelog-section.js";
+import { listEntries } from "./changelog-entries.js";
+import { markerFor, renderComment } from "./comment.js";
+import { issueNumbersIn } from "./issue-references.js";
+import type {
+  ChangelogReader,
+  Issue,
+  IssueApi,
+  Logger,
+  ShippedCommentsRequest,
+  ShippedCommentsResult,
+} from "./models.js";
+
+interface PlannedComment {
+  readonly number: number;
+  readonly body: string;
+  readonly existingId: number | undefined;
+}
+
+interface Plan {
+  readonly planned: PlannedComment[];
+  readonly unchanged: number[];
+  readonly skipped: number[];
+}
+
+const NOTHING: ShippedCommentsResult = { commented: [], unchanged: [], skipped: [] };
+
+// GitHub asks clients to send one request at a time, so each step waits for the one before it.
+function inTurn<T>(items: Iterable<T>, step: (item: T) => Promise<void>): Promise<void> {
+  return Array.from(items).reduce((previous, item) => previous.then(() => step(item)), Promise.resolve());
+}
+
+function skipReason(issue: Issue | undefined): string | undefined {
+  if (issue === undefined) return "not found, deleted or moved";
+  if (issue.isPullRequest) return "a pull request";
+  if (issue.locked) return "locked";
+  return undefined;
+}
+
+export class ShippedComments {
+  constructor(
+    private readonly changelogReader: ChangelogReader,
+    private readonly api: IssueApi,
+    private readonly log: Logger,
+  ) {}
+
+  async run(request: ShippedCommentsRequest): Promise<ShippedCommentsResult> {
+    this.validate(request);
+    const references = await this.referencesFor(request);
+    if (references.size === 0) return NOTHING;
+
+    const plan: Plan = { planned: [], unchanged: [], skipped: [] };
+    await inTurn(references, ([number, entries]) => this.planIssue(number, entries, request, plan));
+    if (plan.planned.length > request.maxComments) {
+      const numbers = plan.planned.map((comment) => `#${comment.number}`).join(", ");
+      throw new Error(
+        `${request.tag} would comment on ${plan.planned.length} issues, more than max-comments (${request.maxComments}): ` +
+          `${numbers}. Nothing was posted.`,
+      );
+    }
+    await inTurn(plan.planned, (comment) => this.post(comment, request.dryRun));
+
+    return { commented: plan.planned.map((comment) => comment.number), unchanged: plan.unchanged, skipped: plan.skipped };
+  }
+
+  // Issue number to the entries that mention it; empty when there is nothing to comment.
+  private async referencesFor(request: ShippedCommentsRequest): Promise<Map<number, string[]>> {
+    const read = await this.changelogReader.read(request.changelogPaths);
+    if (read.kind === "missing") {
+      this.log.warning(`No changelog found in ${request.changelogPaths.join(", ")}; nothing to comment.`);
+      return new Map();
+    }
+    const section = findChangelogSection(read.changelog.content, request.tag);
+    if (section === undefined) {
+      this.log.warning(`${read.changelog.path} has no section for ${request.tag}; nothing to comment.`);
+      return new Map();
+    }
+    const references = this.referencesIn(section, request);
+    if (references.size === 0) {
+      this.log.info(`No entry under ${request.sections.join(", ")} refers to an issue of ${request.repository}.`);
+    }
+    return references;
+  }
+
+  // Sorts one issue into the plan: skipped, already commented, or to comment on.
+  private async planIssue(number: number, entries: string[], request: ShippedCommentsRequest, plan: Plan): Promise<void> {
+    const reason = skipReason(await this.api.getIssue(number));
+    if (reason !== undefined) {
+      this.log.info(`Skipping #${number}: ${reason}.`);
+      plan.skipped.push(number);
+      return;
+    }
+
+    const body = renderComment({
+      tag: request.tag,
+      releaseUrl: request.releaseUrl,
+      productName: request.productName,
+      entries,
+    });
+    const marker = markerFor(request.tag);
+    const existing = (await this.api.listComments(number)).find(
+      (comment) => comment.byBot && comment.body.startsWith(marker),
+    );
+    if (existing?.body === body) {
+      this.log.info(`#${number} already has this comment.`);
+      plan.unchanged.push(number);
+      return;
+    }
+    plan.planned.push({ number, body, existingId: existing?.id });
+  }
+
+  private async post(comment: PlannedComment, dryRun: boolean): Promise<void> {
+    const isNew = comment.existingId === undefined;
+    if (dryRun) {
+      const verb = isNew ? "comment on" : "update the comment on";
+      this.log.info(`Dry run: would ${verb} #${comment.number}:\n${comment.body}`);
+      return;
+    }
+    if (comment.existingId === undefined) await this.api.createComment(comment.number, comment.body);
+    else await this.api.updateComment(comment.existingId, comment.body);
+    const done = isNew ? "Commented on" : "Updated the comment on";
+    this.log.info(`${done} #${comment.number}.`);
+  }
+
+  // Issue number to the entries that mention it, in changelog order.
+  private referencesIn(section: string, request: ShippedCommentsRequest): Map<number, string[]> {
+    const references = new Map<number, string[]>();
+    for (const entry of listEntries(section, request.sections)) {
+      for (const number of issueNumbersIn(entry.text, request.repository, request.serverUrl)) {
+        const entries = references.get(number) ?? [];
+        if (!entries.includes(entry.text)) entries.push(entry.text);
+        references.set(number, entries);
+      }
+    }
+    return references;
+  }
+
+  private validate(request: ShippedCommentsRequest): void {
+    // The tag goes into an HTML comment and a URL.
+    if (!/^[\w.+-]+$/.test(request.tag)) {
+      throw new Error("tag must be a single word of letters, digits and . _ + -");
+    }
+    if (!/^[\w.-]+\/[\w.-]+$/.test(request.repository)) {
+      throw new Error(`repository must be owner/name, got "${request.repository}"`);
+    }
+    if (!Number.isSafeInteger(request.maxComments) || request.maxComments < 1) {
+      throw new Error("max-comments must be a whole number of at least 1");
+    }
+    if (request.sections.length === 0) throw new Error("sections must name at least one section");
+  }
+}
