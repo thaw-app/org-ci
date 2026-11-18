@@ -3,7 +3,7 @@
 
 # SwiftLint needs the Swift runtime libraries this base image carries. Dependabot updates
 # this line only with both the tag and the digest on it, so Sonar's docker:S8431 is accepted here.
-FROM ghcr.io/realm/swiftlint:0.65.1@sha256:f47e083201e47a136cda5ae847595bfe00226c444ca226fa74fa5dc648a9b057 AS base
+FROM ghcr.io/realm/swiftlint:5.5-0.48.0@sha256:26594eb34004b19d49053727bac9609eb3cad2dd7f16d9b9590ca7c2b8f4fe10 AS base
 
 FROM base AS fetch
 
